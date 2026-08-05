@@ -4,47 +4,54 @@ Guidance for agents working in this repository.
 
 ## What this is
 
-**AGPL Android client kit for Prism.** Chat, multimodal modalities, and (later) subscription /
-quota UX against the commercial control plane. Goal is easier access to a curated model set with
-cost-recovery hosting, not a closed app.
+**AGPL Android client kit for Prism.** Metered inference against
+[prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane); conversation
+history / RAG / artifacts stay on [prism](https://github.com/skyphusion-labs/prism) (separate
+API when needed).
 
-**Status: skeleton only.** Honest status matches `README.md`. Aviation-grade `main` (PR + CI +
-coverage). No full app module yet; next work is a Bearer auth client and chat + stream against the
-public or self-hosted Prism API.
+**Kit v0.1.0:** `ControlPlaneClient` (Bearer `pcp_` enroll, me, models, chat, SSE stream).
+No full app module yet. Aviation-grade `main`.
 
 ## Related
 
 | Repo | Role |
 | --- | --- |
-| [prism](https://github.com/skyphusion-labs/prism) | Inference playground Worker (`play.skyphusion.org`) |
-| [prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane) | Commercial multi-tenant control plane (live control plane; this client is still a skeleton kit) |
-| [prism-ios](https://github.com/skyphusion-labs/prism-ios) | Sibling iOS kit (live control plane; this client is still a skeleton kit) |
+| [prism](https://github.com/skyphusion-labs/prism) | Playground Worker (`play.skyphusion.org`) |
+| [prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane) | Metered inference (`play-proxy.skyphusion.org`) -- **primary kit target** |
+| [prism-ios](https://github.com/skyphusion-labs/prism-ios) | Sibling Swift kit (parity source for shapes) |
+| [prism-mcp](https://github.com/skyphusion-labs/prism-mcp) | Agent MCP door (hosted) |
 
 ## Layout
 
-- `prism-kit` -- Kotlin library module (API client, models)
-- App module to be added when UI work starts
-- Root Gradle: `settings.gradle.kts`, `build.gradle.kts`, `gradlew`
+- `prism-kit` -- Kotlin JVM library
+  - `ControlPlaneClient.kt` -- control-plane surface
+  - `HttpJson.kt` -- OkHttp + kotlinx.serialization
+  - `SseParser.kt` -- OpenAI-compatible + playground SSE
+  - `Models.kt` -- contract DTOs
+- App module: not yet
 
 ## Commands
 
 ```bash
-./gradlew :prism-kit:test --no-daemon   # unit tests (Ubuntu CI; no emulator for kit tests)
+./gradlew :prism-kit:test --no-daemon
 ```
 
 ## CI
 
-- `.github/workflows/ci.yml` -- push/PR to `main`: Gradle kit tests on `ubuntu-latest`
-- Coverage workflow present; public repo uses GitHub-hosted runners only (fork-safe)
+- `.github/workflows/ci.yml` -- push/PR `main`: Gradle kit tests on `ubuntu-latest`
+- Coverage + CodeQL present; public repo, GitHub-hosted only
+
+## Contract rules (do not invent)
+
+- Auth: `Authorization: Bearer pcp_<key_id>_<secret>` only. Never return CF credentials to the app.
+- Path versioning: `/v1/...` additive only.
+- `GET /v1/models`: branch on `spendable`; do not show unspendable as callable.
+- `client_revoked` (401) is terminal: drop key, re-enroll.
+- Prompt/completion text is never stored by the control plane.
 
 ## Conventions
 
-- No em-dashes (U+2014) or en-dashes (U+2013) in source or docs; use commas, semicolons, or `--`.
-- Handle / username default: `skyphusion`.
-- Conventional Commits. License: AGPL-3.0-only.
-- Do not invent production deploy docs for a skeleton; keep status honest.
-
-## Crew + identity
-
-Crew work as their own identity (`sudo -u <member> bash -lc '...'`). Conrad laptop commits:
-`Conrad Rockenhaus <conrad@skyphusion.org>`.
+- Conventional Commits; AGPL-3.0-only.
+- No em-dashes / en-dashes in prose.
+- Never a plaintext secret in a tracked file.
+- Prefer parity with iOS `PrismKit` shapes where practical.
