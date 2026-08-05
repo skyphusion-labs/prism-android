@@ -8,4 +8,9 @@ class PrismKitTest {
   fun health() {
     assertEquals("ok:PrismKit", PrismKit.health())
   }
+
+  @Test
+  fun version() {
+    assertEquals("0.1.0", PrismKit.VERSION)
+  }
 }
