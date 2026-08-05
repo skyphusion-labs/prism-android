@@ -7,53 +7,51 @@
 
 ## What this is
 
-AGPL **Android client kit** for Prism: metered chat (and later multimodal + quota UX)
-against the commercial control plane. Goal is easier access to a curated model set with
-cost-recovery hosting, not a closed app.
+AGPL **Android client** for Prism: enroll a device, pick a spendable model, and chat
+against the commercial control plane (`play-proxy.skyphusion.org`). Device keys stay
+in EncryptedSharedPreferences (Android Keystore).
 
 ## Layout
 
-- `prism-kit` -- Kotlin JVM library (OkHttp + kotlinx.serialization)
-  - `ControlPlaneClient` -- `pcp_` bearer enroll / me / models / chat / stream
-  - Contract: control-plane `docs/CONTRACT.md` + `openapi.yaml`
-- App module still to be added (Compose UI)
+| Module | Role |
+|--------|------|
+| `prism-kit` | JVM library: `ControlPlaneClient`, SSE, `SecretStore` |
+| `app` | Compose shell: enroll, model picker, chat, settings |
 
 ## Status
 
-**Kit v0.1.0:** control-plane HTTP client with unit tests (MockWebServer). No app UI yet.
+**v0.1.0 app shell** on top of the kit. Control-plane only (no playground session/RAG yet).
 
 ## Commands
 
 ```bash
+# Kit unit tests (no Android SDK)
 ./gradlew :prism-kit:test --no-daemon
+
+# Debug APK (needs Android SDK + local.properties sdk.dir or ANDROID_HOME)
+./gradlew :app:assembleDebug --no-daemon
 ```
 
-## Control plane usage (kit)
+## App flow
+
+1. **Enroll** with a one-time enrollment token (or import an existing `pcp_` key).
+2. **Models** load from `GET /v1/models`; unspendable entries are greyed out.
+3. **Chat** uses non-stream or SSE stream (`POST /v1/chat/completions`).
+4. **Settings** shows balance and can forget the device key.
+
+## Kit usage
 
 ```kotlin
-val client = ControlPlaneClient() // https://play-proxy.skyphusion.org
-// After out-of-band enrollment token:
+val client = ControlPlaneClient()
 client.enroll(enrollmentToken = "…", label = "Pixel 9")
-// Persist client.clientKey in EncryptedSharedPreferences / Keystore.
+// Persist client.clientKey via SecretStore
 
 val models = client.listModels().data.filter { it.spendable != false }
 val reply = client.chat(model = models.first().id, user = "Hello")
-```
-
-Streaming:
-
-```kotlin
-client.chatCompletionsStream(
-  ControlPlaneChatRequest(
-    model = id,
-    messages = listOf(ControlPlaneChatMessage("user", "Hi")),
-    stream = true,
-  ),
-).collect { event -> /* ChatStreamEvent.Delta / Done */ }
 ```
 
 ## Related
 
 - Live proxy: https://play-proxy.skyphusion.org  
 - Playground: https://play.skyphusion.org  
-- iOS kit: https://github.com/skyphusion-labs/prism-ios  
+- iOS: https://github.com/skyphusion-labs/prism-ios  
