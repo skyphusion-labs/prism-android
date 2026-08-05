@@ -17,8 +17,8 @@ public or self-hosted Prism API.
 | Repo | Role |
 | --- | --- |
 | [prism](https://github.com/skyphusion-labs/prism) | Inference playground Worker (`play.skyphusion.org`) |
-| [prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane) | Commercial multi-tenant control plane (skeleton) |
-| [prism-ios](https://github.com/skyphusion-labs/prism-ios) | Sibling iOS kit (skeleton) |
+| [prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane) | Commercial multi-tenant control plane (live control plane; this client is still a skeleton kit) |
+| [prism-ios](https://github.com/skyphusion-labs/prism-ios) | Sibling iOS kit (live control plane; this client is still a skeleton kit) |
 
 ## Layout
 
