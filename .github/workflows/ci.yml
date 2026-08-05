@@ -14,8 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ci:
-    name: ci
+  kit:
+    name: kit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -26,3 +26,20 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v5
       - run: ./gradlew :prism-kit:test --no-daemon
+
+  app:
+    name: app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+      - name: Accept licenses
+        run: yes | sdkmanager --licenses >/dev/null || true
+      - run: ./gradlew :app:assembleDebug --no-daemon

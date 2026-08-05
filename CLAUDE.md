@@ -4,54 +4,51 @@ Guidance for agents working in this repository.
 
 ## What this is
 
-**AGPL Android client kit for Prism.** Metered inference against
-[prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane); conversation
-history / RAG / artifacts stay on [prism](https://github.com/skyphusion-labs/prism) (separate
-API when needed).
+**AGPL Android client for Prism.** Metered inference against
+[prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane). History / RAG /
+artifacts remain on [prism](https://github.com/skyphusion-labs/prism) (not yet wired in the app).
 
-**Kit v0.1.0:** `ControlPlaneClient` (Bearer `pcp_` enroll, me, models, chat, SSE stream).
-No full app module yet. Aviation-grade `main`.
+**v0.1.0:** kit client + Compose shell (enroll, models, chat stream, EncryptedSharedPreferences).
 
 ## Related
 
 | Repo | Role |
 | --- | --- |
-| [prism](https://github.com/skyphusion-labs/prism) | Playground Worker (`play.skyphusion.org`) |
-| [prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane) | Metered inference (`play-proxy.skyphusion.org`) -- **primary kit target** |
-| [prism-ios](https://github.com/skyphusion-labs/prism-ios) | Sibling Swift kit (parity source for shapes) |
-| [prism-mcp](https://github.com/skyphusion-labs/prism-mcp) | Agent MCP door (hosted) |
+| [prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane) | Metered inference -- primary target |
+| [prism](https://github.com/skyphusion-labs/prism) | Playground Worker |
+| [prism-ios](https://github.com/skyphusion-labs/prism-ios) | Sibling Swift kit + shell |
+| [prism-mcp](https://github.com/skyphusion-labs/prism-mcp) | Agent MCP door |
 
 ## Layout
 
-- `prism-kit` -- Kotlin JVM library
-  - `ControlPlaneClient.kt` -- control-plane surface
-  - `HttpJson.kt` -- OkHttp + kotlinx.serialization
-  - `SseParser.kt` -- OpenAI-compatible + playground SSE
-  - `Models.kt` -- contract DTOs
-- App module: not yet
+- `prism-kit` -- JVM (OkHttp, kotlinx.serialization, coroutines)
+  - `ControlPlaneClient`, `HttpJson`, `SseParser`, `Models`, `SecretStore` / `MemorySecretStore`
+- `app` -- Android application (Compose Material3)
+  - `EncryptedPrefsSecretStore`, `AppViewModel`, enroll / chat / settings screens
 
 ## Commands
 
 ```bash
 ./gradlew :prism-kit:test --no-daemon
+./gradlew :app:assembleDebug --no-daemon   # needs Android SDK
 ```
 
 ## CI
 
-- `.github/workflows/ci.yml` -- push/PR `main`: Gradle kit tests on `ubuntu-latest`
-- Coverage + CodeQL present; public repo, GitHub-hosted only
+- **kit** job: unit tests, no Android SDK
+- **app** job: `setup-android` + `:app:assembleDebug`
+- Public repo; GitHub-hosted only
 
-## Contract rules (do not invent)
+## Contract rules
 
-- Auth: `Authorization: Bearer pcp_<key_id>_<secret>` only. Never return CF credentials to the app.
-- Path versioning: `/v1/...` additive only.
-- `GET /v1/models`: branch on `spendable`; do not show unspendable as callable.
-- `client_revoked` (401) is terminal: drop key, re-enroll.
-- Prompt/completion text is never stored by the control plane.
+- Auth: `Authorization: Bearer pcp_<key_id>_<secret>` only
+- Branch on `spendable` for model picker
+- `client_revoked` / 401: clear stored key, return to enroll
+- Never log device keys or enrollment tokens
+- Never a plaintext secret in a tracked file
 
 ## Conventions
 
-- Conventional Commits; AGPL-3.0-only.
-- No em-dashes / en-dashes in prose.
-- Never a plaintext secret in a tracked file.
-- Prefer parity with iOS `PrismKit` shapes where practical.
+- Conventional Commits; AGPL-3.0-only
+- No em-dashes / en-dashes in prose
+- Prefer parity with iOS PrismKit + App shell
