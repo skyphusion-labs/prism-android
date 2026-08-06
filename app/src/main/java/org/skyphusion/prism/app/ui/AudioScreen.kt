@@ -50,6 +50,7 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.delay
 import org.skyphusion.prism.app.AppViewModel
 import org.skyphusion.prism.app.Haptics
+import org.skyphusion.prism.app.MediaUtils
 import org.skyphusion.prism.app.MicRecorder
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -179,6 +180,13 @@ fun AudioScreen(
       }
 
       Text("Text to speech", style = MaterialTheme.typography.titleMedium)
+      OutlinedTextField(
+        value = vm.modelSearch,
+        onValueChange = { vm.modelSearch = it },
+        label = { Text("Search models") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+      )
       ModelDropdown(
         label = "TTS model",
         models = vm.speechModels,
@@ -219,13 +227,28 @@ fun AudioScreen(
         }
       }
       if (vm.lastSpeechBase64 != null) {
-        TextButton(
-          onClick = {
-            Haptics.success(view)
-            vm.playLastSpeech()
-          },
-        ) {
-          Text("Play")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          TextButton(
+            onClick = {
+              Haptics.success(view)
+              vm.playLastSpeech()
+            },
+          ) {
+            Text("Play")
+          }
+          TextButton(
+            onClick = {
+              val ok =
+                MediaUtils.shareAudioBase64(
+                  context,
+                  vm.lastSpeechBase64!!,
+                  vm.lastSpeechFormat ?: "mp3",
+                )
+              if (ok) Haptics.light(view) else vm.speechError = "Could not share audio"
+            },
+          ) {
+            Text("Share")
+          }
         }
       }
 

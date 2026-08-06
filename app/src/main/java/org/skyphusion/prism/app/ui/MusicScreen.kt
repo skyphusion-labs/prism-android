@@ -3,7 +3,6 @@ package org.skyphusion.prism.app.ui
 import android.content.Intent
 import android.media.MediaPlayer
 import android.net.Uri
-import android.util.Base64
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -38,9 +37,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
-import java.io.File
 import org.skyphusion.prism.app.AppViewModel
 import org.skyphusion.prism.app.Haptics
+import org.skyphusion.prism.app.MediaUtils
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -99,6 +98,14 @@ fun MusicScreen(
       if (!vm.isNetworkSatisfied) {
         OfflineBanner()
       }
+
+      OutlinedTextField(
+        value = vm.modelSearch,
+        onValueChange = { vm.modelSearch = it },
+        label = { Text("Search models") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+      )
 
       ModelDropdown(
         label = "Music model",
@@ -166,26 +173,28 @@ fun MusicScreen(
         }
       }
       vm.lastMusicBase64?.let { b64 ->
-        TextButton(
-          onClick = {
-            try {
-              player?.release()
-              val bytes = Base64.decode(b64, Base64.DEFAULT)
-              val f = File(context.cacheDir, "prism-music.mp3")
-              f.writeBytes(bytes)
-              player =
-                MediaPlayer().apply {
-                  setDataSource(f.absolutePath)
-                  prepare()
-                  start()
-                }
-              Haptics.success(view)
-            } catch (e: Exception) {
-              vm.musicError = e.message ?: "Playback failed"
-            }
-          },
-        ) {
-          Text("Play")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          TextButton(
+            onClick = {
+              try {
+                player?.release()
+                player = MediaUtils.playAudioBase64(context, b64, "mp3")
+                Haptics.success(view)
+              } catch (e: Exception) {
+                vm.musicError = e.message ?: "Playback failed"
+              }
+            },
+          ) {
+            Text("Play")
+          }
+          TextButton(
+            onClick = {
+              val ok = MediaUtils.shareAudioBase64(context, b64, "mp3")
+              if (ok) Haptics.light(view) else vm.musicError = "Could not share audio"
+            },
+          ) {
+            Text("Share")
+          }
         }
       }
 

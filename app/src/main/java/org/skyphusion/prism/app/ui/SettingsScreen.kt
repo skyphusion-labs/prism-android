@@ -23,6 +23,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -351,6 +352,61 @@ fun SettingsScreen(
             modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
           ) {
             Text(kind.title + if (vm.backend == kind) " (active)" else "")
+          }
+        }
+        Spacer(Modifier.height(12.dp))
+        Text("Base URLs", style = MaterialTheme.typography.titleSmall)
+        Spacer(Modifier.height(4.dp))
+        var draftPlane by remember { mutableStateOf(vm.controlPlaneBaseUrl) }
+        var draftPlay by remember { mutableStateOf(vm.playgroundBaseUrl) }
+        OutlinedTextField(
+          value = draftPlane,
+          onValueChange = { draftPlane = it },
+          label = { Text("Control plane URL") },
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth(),
+        )
+        Row {
+          TextButton(
+            onClick = {
+              vm.applyControlPlaneBaseUrl(draftPlane)
+              Haptics.light(view)
+            },
+          ) {
+            Text("Apply plane URL")
+          }
+          TextButton(
+            onClick = {
+              vm.resetControlPlaneBaseUrl()
+              draftPlane = vm.controlPlaneBaseUrl
+            },
+          ) {
+            Text("Use production")
+          }
+        }
+        OutlinedTextField(
+          value = draftPlay,
+          onValueChange = { draftPlay = it },
+          label = { Text("Playground URL") },
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth(),
+        )
+        Row {
+          TextButton(
+            onClick = {
+              vm.applyPlaygroundBaseUrl(draftPlay)
+              Haptics.light(view)
+            },
+          ) {
+            Text("Apply playground URL")
+          }
+          TextButton(
+            onClick = {
+              vm.resetPlaygroundBaseUrl()
+              draftPlay = vm.playgroundBaseUrl
+            },
+          ) {
+            Text("Use production")
           }
         }
       }

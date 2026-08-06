@@ -1,8 +1,14 @@
 package org.skyphusion.prism
 
+import java.io.BufferedReader
+import java.io.InputStreamReader
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import okhttp3.Cookie
@@ -151,7 +157,7 @@ class PrismClient(
 
   /**
    * Streaming chat via SSE (`POST /api/chat/stream`).
-   * Buffers the full body then parses (reliable for tests and mobile).
+   * Buffers the full body then parses (reliable for tests).
    */
   fun chatStream(body: PlaygroundChatRequest): List<ChatStreamEvent> {
     val json = prismJsonEncode.encodeToString(body)
@@ -168,6 +174,67 @@ class PrismClient(
     return SseParser.parseChatEvents(text)
   }
 
+  /**
+   * Incremental SSE: yields events as frames arrive (iOS chatStreamEvents parity).
+   * Collect on a background dispatcher; closes the HTTP body when done or cancelled.
+   */
+  fun chatStreamEvents(body: PlaygroundChatRequest): Flow<ChatStreamEvent> =
+    flow {
+      val json = prismJsonEncode.encodeToString(body)
+      val headers = defaultHeaders + mapOf("Accept" to "text/event-stream")
+      val req =
+        http.request(
+          method = "POST",
+          path = "/api/chat/stream",
+          bodyJson = json,
+          headers = headers,
+        )
+      val call = http.client.newCall(req)
+      val res =
+        try {
+          call.execute()
+        } catch (e: Exception) {
+          throw PrismError.Transport("Transport failed: ${e.message}", e)
+        }
+      if (res.code !in 200..299) {
+        val raw = res.body?.string().orEmpty()
+        res.close()
+        throw HttpJson.mapHttpError(res.code, raw)
+      }
+      val source =
+        res.body?.byteStream()
+          ?: run {
+            res.close()
+            throw PrismError.Transport("Empty stream body")
+          }
+      try {
+        val reader = BufferedReader(InputStreamReader(source, StandardCharsets.UTF_8))
+        val carry = StringBuilder()
+        while (true) {
+          val line = reader.readLine() ?: break
+          if (line.isEmpty()) {
+            val chunk = carry.toString() + "\n\n"
+            carry.clear()
+            for (ev in SseParser.parseChatEvents(chunk)) {
+              emit(ev)
+              if (ev is ChatStreamEvent.Error) throw PrismError.Server(ev.message)
+            }
+          } else {
+            if (carry.isNotEmpty()) carry.append('\n')
+            carry.append(line)
+          }
+        }
+        if (carry.isNotEmpty()) {
+          for (ev in SseParser.parseChatEvents(carry.toString() + "\n\n")) {
+            emit(ev)
+            if (ev is ChatStreamEvent.Error) throw PrismError.Server(ev.message)
+          }
+        }
+      } finally {
+        res.close()
+      }
+    }.flowOn(Dispatchers.IO)
+
   fun chatStreamText(body: PlaygroundChatRequest): Pair<String, PlaygroundChatResponse?> {
     val events = chatStream(body)
     val parts = StringBuilder()
@@ -176,9 +243,11 @@ class PrismClient(
       when (e) {
         is ChatStreamEvent.Delta -> parts.append(e.text)
         is ChatStreamEvent.Done -> {
-          if (!e.fullText.isNullOrEmpty()) {
-            final = PlaygroundChatResponse(output = e.fullText)
-          }
+          final =
+            PlaygroundChatResponse(
+              output = e.fullText ?: final?.output,
+              conversationId = e.conversationId ?: final?.conversationId,
+            )
         }
         is ChatStreamEvent.Error -> throw PrismError.Server(e.message)
         is ChatStreamEvent.Unknown -> Unit

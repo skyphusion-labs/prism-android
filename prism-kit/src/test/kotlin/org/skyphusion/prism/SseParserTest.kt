@@ -39,7 +39,9 @@ class SseParserTest {
     assertIs<ChatStreamEvent.Delta>(events[0])
     assertEquals("A", (events[0] as ChatStreamEvent.Delta).text)
     assertIs<ChatStreamEvent.Done>(events[1])
-    assertEquals("A", (events[1] as ChatStreamEvent.Done).fullText)
+    val done = events[1] as ChatStreamEvent.Done
+    assertEquals("A", done.fullText)
+    assertEquals("c1", done.conversationId)
   }
 
   @Test

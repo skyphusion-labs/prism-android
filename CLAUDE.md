@@ -8,9 +8,9 @@ Guidance for agents working in this repository.
 [prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane). History / RAG /
 artifacts remain on [prism](https://github.com/skyphusion-labs/prism) (not yet wired in the app).
 
-**v0.5.0:** dual-backend (Control plane default; Playground behind Developer).
-Kit `PrismClient` auth + chat/stream; app login + backend switch. Prior 0.4.x:
-More hub, mic STT, photos/Speak. Grok video **0.4.14+**; Play redeem **0.4.16+**.
+**v0.5.1:** iOS polish: incremental playground SSE + conversation_id, model search,
+markdown chat, in-app video, share audio, developer base URLs. Prior 0.5.0 dual-backend.
+Grok video **0.4.14+**; Play redeem **0.4.16+**.
 
 ## Related
 
