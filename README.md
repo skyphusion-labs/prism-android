@@ -20,15 +20,13 @@ AGPL **Android client** for Prism against the commercial control plane
 
 ## Status
 
-**v0.6.0** -- iOS 0.8.2 product parity (+ Android live STT):
+**v0.7.0** -- iOS 0.8.3 product parity:
 
-- **Vision** photo attach on chat (multiparty plane `image_url`; playground attachments)
-- **Seedance-first** video default; Hailuo i2v footer
-- Empty-stream **non-stream fallback** (iOS #33)
-- Playground **cloud chat sync**; local session JSON export/import
-- Media history clear; complete starter prompts; first-run **onboarding**
-- **Live STT** WebSocket (plane, linear16 @ 16 kHz; beyond iOS app UI)
-- Prior 0.5.x: dual-backend, More hub, compact, sessions, media doors
+- **Usage** screen (More → dual-pool + period meter via `GET /v1/usage`)
+- Chat **rate preview** + capability tags; library / **camera** / **clipboard** attach
+- Composer **mic → STT → draft**; video completion **notification**
+- Expanded onboarding (welcome → enroll → tips)
+- Prior 0.6.0: vision multiparty, Seedance default, stream fallback, sync/export, live STT
 
 Create the three in-app products in Play Console (same product ids as App Store). Production
 redeem needs Worker secret `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` on the plane.

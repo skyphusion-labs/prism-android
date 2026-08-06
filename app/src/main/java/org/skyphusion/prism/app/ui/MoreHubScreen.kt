@@ -13,6 +13,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Settings
@@ -43,6 +44,7 @@ fun MoreHubScreen(
   vm: AppViewModel,
   onOpenAudio: () -> Unit,
   onOpenMusic: () -> Unit,
+  onOpenUsage: () -> Unit = {},
   onOpenSettings: () -> Unit,
 ) {
   val view = LocalView.current
@@ -98,7 +100,7 @@ fun MoreHubScreen(
         vm.balance?.let {
           Text("Balance: $it", style = MaterialTheme.typography.bodyMedium)
         }
-        vm.planeUsageLines.forEach { line ->
+        vm.planeUsageLines.take(3).forEach { line ->
           Text(
             line,
             style = MaterialTheme.typography.bodySmall,
@@ -114,6 +116,15 @@ fun MoreHubScreen(
               true -> MaterialTheme.colorScheme.primary
               null -> MaterialTheme.colorScheme.onSurface
             },
+        )
+        HubRow(
+          icon = Icons.Default.AccountBalanceWallet,
+          title = "Usage & spend",
+          subtitle = "Dual-pool balance and period meter",
+          onClick = {
+            Haptics.light(view)
+            onOpenUsage()
+          },
         )
         TextButton(
           onClick = {
