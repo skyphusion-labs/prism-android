@@ -8,9 +8,8 @@ Guidance for agents working in this repository.
 [prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane). History / RAG /
 artifacts remain on [prism](https://github.com/skyphusion-labs/prism) (not yet wired in the app).
 
-**v0.4.0:** multi-session chats + TTS/STT/music doors (iOS 0.7–0.8). Local sessions
-cap 50; Audio + Music tabs. Prior: compact (0.3.5), regenerate/offline (0.3.4).
-Grok video **0.4.14+**; Play redeem **0.4.16+**.
+**v0.4.1:** photo picker + save-to-gallery + Speak on chat (iOS media polish).
+Prior 0.4.0: multi-session + Audio/Music. Grok video **0.4.14+**; Play redeem **0.4.16+**.
 
 ## Related
 
@@ -55,3 +54,9 @@ Grok video **0.4.14+**; Play redeem **0.4.16+**.
 - Conventional Commits; AGPL-3.0-only
 - No em-dashes / en-dashes in prose
 - Prefer parity with iOS PrismKit + App shell
+
+## Release / deploy
+
+**Tag-gated production deploy.** Merges to `main` run CI only; they do not ship production.
+Cut an annotated SemVer tag on `main` to release (`git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`).
+Deploy workflows assert the tag commit is an ancestor of `origin/main`.

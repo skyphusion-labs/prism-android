@@ -1,6 +1,5 @@
 package org.skyphusion.prism.app.ui
 
-import android.media.MediaPlayer
 import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -32,7 +31,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,7 +40,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
-import java.io.File
 import org.skyphusion.prism.app.AppViewModel
 import org.skyphusion.prism.app.Haptics
 
@@ -56,14 +53,6 @@ fun AudioScreen(
   val view = LocalView.current
   var speechExpanded by remember { mutableStateOf(false) }
   var sttExpanded by remember { mutableStateOf(false) }
-  var player by remember { mutableStateOf<MediaPlayer?>(null) }
-
-  DisposableEffect(Unit) {
-    onDispose {
-      player?.release()
-      player = null
-    }
-  }
 
   val pickAudio =
     rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -142,7 +131,7 @@ fun AudioScreen(
         Button(
           onClick = {
             Haptics.light(view)
-            vm.generateSpeech()
+            vm.generateSpeech(autoPlay = true)
           },
           enabled = vm.speechModels.isNotEmpty() && vm.speechInput.isNotBlank(),
           modifier = Modifier.fillMaxWidth(),
@@ -153,22 +142,8 @@ fun AudioScreen(
       if (vm.lastSpeechBase64 != null) {
         TextButton(
           onClick = {
-            try {
-              player?.release()
-              val bytes = Base64.decode(vm.lastSpeechBase64, Base64.DEFAULT)
-              val ext = vm.lastSpeechFormat ?: "mp3"
-              val f = File(context.cacheDir, "prism-speech.$ext")
-              f.writeBytes(bytes)
-              player =
-                MediaPlayer().apply {
-                  setDataSource(f.absolutePath)
-                  prepare()
-                  start()
-                }
-              Haptics.success(view)
-            } catch (e: Exception) {
-              vm.speechError = e.message ?: "Playback failed"
-            }
+            Haptics.success(view)
+            vm.playLastSpeech()
           },
         ) {
           Text("Play")
