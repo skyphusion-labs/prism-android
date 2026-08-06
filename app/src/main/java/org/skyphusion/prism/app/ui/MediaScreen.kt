@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -20,6 +21,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -34,11 +36,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import org.skyphusion.prism.app.AppViewModel
 import org.skyphusion.prism.app.MediaKind
 
@@ -55,6 +61,9 @@ fun MediaScreen(
     if (kind == MediaKind.Image) vm.selectedImageModelId else vm.selectedVideoModelId
   val selected = models.firstOrNull { it.id == selectedId }
   var expanded by remember { mutableStateOf(false) }
+  val spendPreview = if (kind == MediaKind.Image) vm.imageSpendPreview else vm.videoSpendPreview
+  val history = vm.historyFor(kind)
+  val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
 
   Scaffold(
     topBar = {
@@ -162,6 +171,14 @@ fun MediaScreen(
         }
       }
 
+      spendPreview?.let {
+        Text(
+          it,
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+
       Text(
         if (kind == MediaKind.Image) {
           "Unit-priced image door. Prefer xAI / Flux when available. i2i models need a reference."
@@ -173,17 +190,23 @@ fun MediaScreen(
       )
 
       if (vm.mediaBusy) {
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(12.dp),
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          CircularProgressIndicator(modifier = Modifier.height(22.dp), strokeWidth = 2.dp)
+          Text(
+            "Generating… ${vm.mediaElapsedSeconds}s",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
         Button(
           onClick = { vm.cancelMedia() },
           modifier = Modifier.fillMaxWidth(),
         ) {
-          CircularProgressIndicator(
-            modifier = Modifier.height(18.dp),
-            strokeWidth = 2.dp,
-            color = MaterialTheme.colorScheme.onPrimary,
-          )
-          Spacer(Modifier.padding(8.dp))
-          Text("Cancel")
+          Text("Cancel generation")
         }
       } else {
         Button(
@@ -194,6 +217,16 @@ fun MediaScreen(
           modifier = Modifier.fillMaxWidth(),
         ) {
           Text(if (kind == MediaKind.Image) "Generate image" else "Generate video")
+        }
+        if (kind == MediaKind.Video && vm.mediaError != null &&
+          (vm.videoPrompt.isNotBlank() || vm.videoImageRef.isNotBlank())
+        ) {
+          TextButton(
+            onClick = { vm.retryLastVideo() },
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Text("Retry video (same prompt)")
+          }
         }
       }
 
@@ -222,7 +255,7 @@ fun MediaScreen(
         }
         if (vm.lastImageBase64 != null && vm.lastImageUrl == null) {
           Text(
-            "Image returned as base64 (${vm.lastImageBase64!!.length} chars). Save/share from a later build.",
+            "Image returned as base64 (${vm.lastImageBase64!!.length} chars).",
             style = MaterialTheme.typography.bodySmall,
           )
         }
@@ -239,6 +272,37 @@ fun MediaScreen(
             modifier = Modifier.fillMaxWidth(),
           ) {
             Text("Open video")
+          }
+        }
+      }
+
+      if (history.isNotEmpty()) {
+        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+        Text("History (this session)", style = MaterialTheme.typography.titleSmall)
+        Text(
+          "Newest first. Tap to restore. Not saved across launches.",
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        history.forEach { item ->
+          TextButton(
+            onClick = { vm.restoreMediaHistoryItem(item) },
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Column(Modifier.fillMaxWidth()) {
+              Text(item.model, style = MaterialTheme.typography.labelMedium)
+              Text(
+                item.prompt,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+              )
+              Text(
+                timeFmt.format(Date(item.createdAtMs)),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+              )
+            }
           }
         }
       }

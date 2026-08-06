@@ -20,13 +20,13 @@ AGPL **Android client** for Prism against the commercial control plane
 
 ## Status
 
-**v0.3.0** -- plane media + **Play Billing** credit top-up (parity with iOS StoreKit path):
+**v0.3.1** -- plane media + Play Billing + iOS 0.6.x polish:
 
 - Chat + stream; Image / Video tabs
-- Play Billing consumables `org.skyphusion.prism.credit.{5,20,50}` → `POST /v1/store/redeem`
-  (`platform=google_play`; plane **0.4.16+**)
+- Spend preview (unit/token catalog rate), media elapsed timer, session media history (cap 20)
+- Chat cancel + retry last failed message; video retry same prompt; model switch keeps chat context
+- Play Billing consumables → `POST /v1/store/redeem` (`platform=google_play`; plane **0.4.16+**)
 - Model pickers: spendable filter, Grok video last, Veo / Seedance Fast defaults
-- User-facing error map (402 balance, 7003, ZDR)
 
 Create the three in-app products in Play Console (same product ids as App Store). Production
 redeem needs Worker secret `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` on the plane.
