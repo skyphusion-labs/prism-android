@@ -32,7 +32,13 @@ class MainActivity : ComponentActivity() {
       PrismTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
           val vm: AppViewModel =
-            viewModel(factory = AppViewModel.Factory(secrets))
+            viewModel(
+              factory =
+                AppViewModel.Factory(
+                  secrets = secrets,
+                  appContext = applicationContext,
+                ),
+            )
           var showSettings by remember { mutableStateOf(false) }
           val lifecycleOwner = LocalLifecycleOwner.current
 
