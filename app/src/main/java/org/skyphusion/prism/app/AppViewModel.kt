@@ -329,6 +329,11 @@ class AppViewModel(
 
   override fun onCleared() {
     stopNetworkMonitor()
+    try {
+      speechPlayer?.release()
+    } catch (_: Exception) {
+    }
+    speechPlayer = null
     super.onCleared()
   }
 
@@ -475,6 +480,49 @@ class AppViewModel(
 
   fun clearVideoReference() {
     videoImageRef = ""
+  }
+
+  /** Encode photo bytes as a data: URL for i2i / i2v reference fields. */
+  fun setImageReferenceData(bytes: ByteArray, mime: String = "image/jpeg") {
+    imageImageRef = MediaUtils.bytesToDataUrl(bytes, mime)
+  }
+
+  fun setVideoReferenceData(bytes: ByteArray, mime: String = "image/jpeg") {
+    videoImageRef = MediaUtils.bytesToDataUrl(bytes, mime)
+  }
+
+  /**
+   * Save last generated image to the device gallery.
+   * Prefers base64 payload; falls back to downloading [lastImageUrl] when needed.
+   */
+  fun saveLastImageToGallery(onDone: (Boolean, String) -> Unit) {
+    viewModelScope.launch {
+      try {
+        val bytes: ByteArray? =
+          lastImageBase64?.let { MediaUtils.decodeBase64Payload(it) }
+            ?: lastImageUrl?.let { url ->
+              withContext(Dispatchers.IO) {
+                java.net.URL(url).openStream().use { it.readBytes() }
+              }
+            }
+        if (bytes == null || bytes.isEmpty()) {
+          onDone(false, "No image to save.")
+          return@launch
+        }
+        val ok =
+          withContext(Dispatchers.IO) {
+            MediaUtils.saveImageToGallery(appContext, bytes)
+          }
+        if (ok) {
+          mediaStatus = "Saved to Photos"
+          onDone(true, "Saved to Photos")
+        } else {
+          onDone(false, "Could not save image.")
+        }
+      } catch (e: Exception) {
+        onDone(false, e.message ?: "Save failed")
+      }
+    }
   }
 
   /** Fill draft from an empty-state starter chip. */
@@ -1371,7 +1419,14 @@ class AppViewModel(
 
   // --- Speech / STT / music ---
 
-  fun generateSpeech() {
+  /** When true, auto-play TTS after the next successful [generateSpeech]. */
+  private var autoPlaySpeechAfterGenerate: Boolean = false
+  private var speechPlayer: android.media.MediaPlayer? = null
+
+  val canSpeakText: Boolean
+    get() = hasDeviceKey && speechModels.any { it.spendable != false } && !speechBusy
+
+  fun generateSpeech(autoPlay: Boolean = false) {
     val modelId = selectedSpeechModelId ?: selectedSpeechModel?.id ?: return
     val input = speechInput.trim()
     if (input.isEmpty() || speechBusy) return
@@ -1384,6 +1439,7 @@ class AppViewModel(
       speechError = "Model is not spendable on this plan"
       return
     }
+    if (autoPlay) autoPlaySpeechAfterGenerate = true
     viewModelScope.launch {
       speechBusy = true
       speechError = null
@@ -1397,8 +1453,13 @@ class AppViewModel(
         lastSpeechFormat = res.format ?: "mp3"
         speechStatus = "Speech ready"
         refreshAccount()
+        if (autoPlaySpeechAfterGenerate) {
+          autoPlaySpeechAfterGenerate = false
+          playLastSpeech()
+        }
       } catch (e: Exception) {
         if (e is kotlinx.coroutines.CancellationException) throw e
+        autoPlaySpeechAfterGenerate = false
         handleAuthError(e)
         speechError = e.toUserMessage()
         speechStatus = null
@@ -1408,10 +1469,24 @@ class AppViewModel(
     }
   }
 
-  /** Use assistant text as TTS input. */
+  /** Use assistant text as TTS input and auto-play when ready (iOS parity). */
   fun speakText(text: String) {
-    speechInput = text.trim()
-    generateSpeech()
+    val t = text.trim()
+    if (t.isEmpty()) return
+    speechInput = t
+    generateSpeech(autoPlay = true)
+  }
+
+  fun playLastSpeech() {
+    val b64 = lastSpeechBase64 ?: return
+    try {
+      speechPlayer?.release()
+      speechPlayer =
+        MediaUtils.playAudioBase64(appContext, b64, lastSpeechFormat ?: "mp3")
+      speechStatus = "Playing…"
+    } catch (e: Exception) {
+      speechError = e.message ?: "Playback failed"
+    }
   }
 
   fun transcribeAudio() {

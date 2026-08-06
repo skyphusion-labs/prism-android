@@ -1,11 +1,16 @@
 package org.skyphusion.prism.app.ui
 
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.net.Uri
+import android.util.Base64
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -38,6 +43,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -49,6 +55,7 @@ import java.util.Locale
 import org.skyphusion.prism.app.AppViewModel
 import org.skyphusion.prism.app.Haptics
 import org.skyphusion.prism.app.MediaKind
+import org.skyphusion.prism.app.MediaUtils
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -67,6 +74,26 @@ fun MediaScreen(
   val spendPreview = if (kind == MediaKind.Image) vm.imageSpendPreview else vm.videoSpendPreview
   val history = vm.historyFor(kind)
   val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+  var saveMessage by remember { mutableStateOf<String?>(null) }
+
+  val pickPhoto =
+    rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+      if (uri == null) return@rememberLauncherForActivityResult
+      try {
+        val bytes =
+          context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            ?: return@rememberLauncherForActivityResult
+        val mime = context.contentResolver.getType(uri) ?: "image/jpeg"
+        if (kind == MediaKind.Image) {
+          vm.setImageReferenceData(bytes, mime)
+        } else {
+          vm.setVideoReferenceData(bytes, mime)
+        }
+        Haptics.light(view)
+      } catch (e: Exception) {
+        vm.mediaError = e.message ?: "Could not read photo"
+      }
+    }
 
   Scaffold(
     topBar = {
@@ -160,6 +187,15 @@ fun MediaScreen(
           minLines = 2,
           modifier = Modifier.fillMaxWidth(),
         )
+        TextButton(
+          onClick = {
+            pickPhoto.launch(
+              PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+            )
+          },
+        ) {
+          Text("Choose photo for reference")
+        }
         if (vm.lastImageUrl != null || vm.lastImageBase64 != null) {
           TextButton(onClick = { vm.useLastImageAsReference(forVideo = false) }) {
             Text("Use last result as reference")
@@ -180,6 +216,15 @@ fun MediaScreen(
           minLines = 2,
           modifier = Modifier.fillMaxWidth(),
         )
+        TextButton(
+          onClick = {
+            pickPhoto.launch(
+              PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+            )
+          },
+        ) {
+          Text("Choose photo for i2v")
+        }
         if (vm.lastImageUrl != null || vm.lastImageBase64 != null) {
           TextButton(onClick = { vm.useLastImageAsReference(forVideo = true) }) {
             Text("Use last image as first frame")
@@ -274,26 +319,82 @@ fun MediaScreen(
       }
 
       if (kind == MediaKind.Image) {
-        vm.lastImageUrl?.let { url ->
-          AsyncImage(
-            model = url,
+        val b64 = vm.lastImageBase64
+        val bitmap =
+          remember(b64) {
+            b64?.let { raw ->
+              MediaUtils.decodeBitmap(raw)
+                ?: run {
+                  try {
+                    val bytes = Base64.decode(raw, Base64.DEFAULT)
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                  } catch (_: Exception) {
+                    null
+                  }
+                }
+            }
+          }
+        if (bitmap != null) {
+          Image(
+            bitmap = bitmap.asImageBitmap(),
             contentDescription = "Generated image",
             modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
             contentScale = ContentScale.Fit,
           )
-          TextButton(
-            onClick = {
-              context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-            },
-          ) {
-            Text("Open image URL")
+        } else {
+          vm.lastImageUrl?.let { url ->
+            AsyncImage(
+              model = url,
+              contentDescription = "Generated image",
+              modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
+              contentScale = ContentScale.Fit,
+            )
           }
         }
-        if (vm.lastImageBase64 != null && vm.lastImageUrl == null) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          if (vm.lastImageBase64 != null || vm.lastImageUrl != null) {
+            TextButton(
+              onClick = {
+                Haptics.light(view)
+                vm.saveLastImageToGallery { ok, msg ->
+                  saveMessage = msg
+                  if (ok) Haptics.success(view) else Haptics.error(view)
+                }
+              },
+            ) {
+              Text("Save to Photos")
+            }
+          }
+          vm.lastImageUrl?.let { url ->
+            TextButton(
+              onClick = {
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+              },
+            ) {
+              Text("Open URL")
+            }
+            TextButton(
+              onClick = {
+                val send =
+                  Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, url)
+                  }
+                context.startActivity(Intent.createChooser(send, "Share image URL"))
+              },
+            ) {
+              Text("Share URL")
+            }
+          }
+        }
+        if (bitmap == null && vm.lastImageBase64 != null && vm.lastImageUrl == null) {
           Text(
-            "Image returned as base64 (${vm.lastImageBase64!!.length} chars).",
+            "Image returned as base64 (${vm.lastImageBase64!!.length} chars) but could not decode.",
             style = MaterialTheme.typography.bodySmall,
           )
+        }
+        saveMessage?.let {
+          Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
         }
       }
 

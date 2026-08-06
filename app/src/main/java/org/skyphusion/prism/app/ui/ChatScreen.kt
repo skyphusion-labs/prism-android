@@ -242,10 +242,16 @@ fun ChatScreen(
               vm.canRegenerateLastReply &&
                 turn.id == vm.turns.lastOrNull()?.id &&
                 turn.role == ChatTurn.Role.Assistant
+            val canSpeak =
+              turn.role == ChatTurn.Role.Assistant &&
+                turn.text.isNotBlank() &&
+                !turn.text.startsWith("(cancelled)") &&
+                vm.canSpeakText
             TurnBubble(
               turn = turn,
               isStreaming = streaming,
               canRegenerate = canRegen,
+              canSpeak = canSpeak,
               onRegenerate = {
                 Haptics.light(view)
                 vm.regenerateLastReply()
@@ -253,6 +259,10 @@ fun ChatScreen(
               onUseAsDraft = {
                 Haptics.light(view)
                 vm.useTurnAsDraft(turn)
+              },
+              onSpeak = {
+                Haptics.light(view)
+                vm.speakText(turn.text)
               },
             )
           }
@@ -526,8 +536,10 @@ private fun TurnBubble(
   turn: ChatTurn,
   isStreaming: Boolean = false,
   canRegenerate: Boolean = false,
+  canSpeak: Boolean = false,
   onRegenerate: (() -> Unit)? = null,
   onUseAsDraft: (() -> Unit)? = null,
+  onSpeak: (() -> Unit)? = null,
 ) {
   val isUser = turn.role == ChatTurn.Role.User
   Row(
@@ -594,9 +606,18 @@ private fun TurnBubble(
           )
         }
       }
-      if (canRegenerate && onRegenerate != null) {
-        TextButton(onClick = onRegenerate) {
-          Text("Regenerate")
+      if (!isUser && !isStreaming) {
+        Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+          if (canRegenerate && onRegenerate != null) {
+            TextButton(onClick = onRegenerate) {
+              Text("Regenerate")
+            }
+          }
+          if (canSpeak && onSpeak != null) {
+            TextButton(onClick = onSpeak) {
+              Text("Speak")
+            }
+          }
         }
       }
     }
