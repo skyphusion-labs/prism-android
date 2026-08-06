@@ -18,11 +18,14 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.Instant
 import org.skyphusion.prism.ChatStreamEvent
 import org.skyphusion.prism.ControlPlaneChatMessage
 import org.skyphusion.prism.ControlPlaneChatRequest
 import org.skyphusion.prism.ControlPlaneClient
 import org.skyphusion.prism.ControlPlaneModel
+import org.skyphusion.prism.ConversationCompact
+import org.skyphusion.prism.ConversationCompactState
 import org.skyphusion.prism.PrismError
 import org.skyphusion.prism.SecretStore
 import org.skyphusion.prism.SecretStoreKeys
@@ -140,6 +143,13 @@ class AppViewModel(
     private set
   var canRetryLastChat by mutableStateOf(false)
     private set
+
+  /** Client-side compact (plane). UI transcript stays full; wire history shrinks. */
+  var compactState by mutableStateOf<ConversationCompactState?>(null)
+    private set
+  var compactBusy by mutableStateOf(false)
+    private set
+
   private var lastFailedChatText: String? = null
   private var mediaJob: Job? = null
   private var mediaTimerJob: Job? = null
@@ -202,6 +212,24 @@ class AppViewModel(
   val imageSpendPreview: String? get() = spendPreview(selectedImageModel)
   val videoSpendPreview: String? get() = spendPreview(selectedVideoModel)
   val chatSpendPreview: String? get() = spendPreview(selectedChatModel)
+
+  /** Completed user/assistant pairs eligible for compact (web bar: need 3+). */
+  val completedChatPairCount: Int
+    get() = completedChatPairs().size
+
+  val isCompacted: Boolean
+    get() = compactState?.summary?.isNotBlank() == true
+
+  /** Enough history to compact, and not already compacted. */
+  val canCompactConversation: Boolean
+    get() {
+      if (!hasDeviceKey || isBusy || compactBusy || isCompacted) return false
+      if (!isNetworkSatisfied) return false
+      return completedChatPairCount >= ConversationCompact.MIN_TURNS_TO_COMPACT
+    }
+
+  val canExpandConversation: Boolean
+    get() = hasDeviceKey && !isBusy && !compactBusy && isCompacted
 
   init {
     startNetworkMonitor()
@@ -456,6 +484,7 @@ class AppViewModel(
     selectedVideoModelId = null
     balance = null
     turns.clear()
+    compactState = null
     clearMediaResults()
     banner = "Control plane · re-enroll required"
   }
@@ -526,7 +555,124 @@ class AppViewModel(
 
   fun clearChat() {
     turns.clear()
+    compactState = null
     clearChatFailure()
+  }
+
+  /**
+   * Completed user/assistant pairs (skips empty / error / cancelled assistant shells).
+   * [ConversationCompact.Pair.throughTurnIndex] is the linear index of the assistant turn.
+   */
+  fun completedChatPairs(): List<ConversationCompact.Pair> {
+    val pairs = mutableListOf<ConversationCompact.Pair>()
+    var i = 0
+    val list = turns
+    while (i < list.size) {
+      val t = list[i]
+      if (t.role == ChatTurn.Role.User) {
+        val u = t.text.trim()
+        if (i + 1 < list.size && list[i + 1].role == ChatTurn.Role.Assistant) {
+          val a = list[i + 1].text.trim()
+          if (u.isNotEmpty() && a.isNotEmpty() &&
+            !a.startsWith("(error)") && !a.startsWith("(cancelled)")
+          ) {
+            pairs.add(
+              ConversationCompact.Pair(
+                user = u,
+                assistant = a,
+                throughTurnIndex = i + 1,
+              ),
+            )
+          }
+          i += 2
+          continue
+        }
+      }
+      i += 1
+    }
+    return pairs
+  }
+
+  /** Compact older turns via a plane chat summary (playground API not wired yet). */
+  fun compactConversation() {
+    if (!canCompactConversation) return
+    viewModelScope.launch {
+      compactBusy = true
+      errorMessage = null
+      try {
+        performPlaneCompact()
+      } catch (e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
+        handleAuthError(e)
+        errorMessage = e.toUserMessage()
+      } finally {
+        compactBusy = false
+      }
+    }
+  }
+
+  /** Clear compact so the next send uses full history again. */
+  fun expandConversation() {
+    if (!canExpandConversation) return
+    compactState = null
+    banner = "Expanded -- next turn uses full history"
+    errorMessage = null
+  }
+
+  private suspend fun performPlaneCompact() {
+    val pairs = completedChatPairs()
+    val keep = ConversationCompact.DEFAULT_KEEP_RECENT
+    if (pairs.size < keep + 1) {
+      errorMessage =
+        "Need at least ${keep + 1} completed turns to compact (have ${pairs.size})."
+      return
+    }
+    val split = ConversationCompact.splitPairs(pairs, keepRecent = keep)
+    if (split.summarize.isEmpty()) {
+      errorMessage = "Nothing to summarize with keep_recent=$keep."
+      return
+    }
+    val modelId = selectedModelId ?: selectedChatModel?.id
+    if (modelId == null) {
+      errorMessage = "Pick a chat model to run the compact summary."
+      return
+    }
+    if (!isNetworkSatisfied) {
+      errorMessage = "No network connection. Reconnect and try again."
+      return
+    }
+    val transcript = ConversationCompact.formatPairsForSummary(split.summarize)
+    val messages =
+      listOf(
+        ControlPlaneChatMessage(role = "system", content = ConversationCompact.SYSTEM_PROMPT),
+        ControlPlaneChatMessage(
+          role = "user",
+          content = "Compress the following conversation into a continuity brief.\n\n$transcript",
+        ),
+      )
+    val raw =
+      withContext(Dispatchers.IO) {
+        client.chat(model = modelId, messages = messages)
+      }
+    val summary = ConversationCompact.normalizeSummary(raw)
+    if (summary.isEmpty()) {
+      errorMessage = "Compact model returned empty summary."
+      return
+    }
+    val through = split.summarize.last().throughTurnIndex
+    compactState =
+      ConversationCompactState(
+        summary = summary,
+        throughTurnIndex = through,
+        keepRecent = keep,
+        model = modelId,
+        updatedAt = Instant.now().toString(),
+      )
+    val n = split.summarize.size
+    val k = split.keep.size
+    banner =
+      "Compacted $n turn${if (n == 1) "" else "s"}; keeping $k recent raw"
+    refreshAccount()
   }
 
   fun retryLastFailedChat() {
@@ -614,15 +760,9 @@ class AppViewModel(
         isBusy = true
         errorMessage = null
         try {
-          val history =
-            turns.dropLast(1).mapNotNull { t ->
-              when (t.role) {
-                ChatTurn.Role.User -> ControlPlaneChatMessage("user", t.text)
-                ChatTurn.Role.Assistant ->
-                  if (t.text.isNotEmpty()) ControlPlaneChatMessage("assistant", t.text) else null
-                ChatTurn.Role.System -> ControlPlaneChatMessage("system", t.text)
-              }
-            }
+          // With compact active: inject summary system block and only turns after
+          // through_turn_index (prism v0.175.7 parity). UI transcript unchanged.
+          val history = buildPlaneChatMessages(excludeAssistantIndex = assistantIndex)
 
           if (useStream && model?.streaming != false) {
             val req =
@@ -867,6 +1007,45 @@ class AppViewModel(
   private fun clearChatFailure() {
     lastFailedChatText = null
     canRetryLastChat = false
+  }
+
+  /**
+   * Build OpenAI-style messages for the plane, applying compact if set.
+   * [excludeAssistantIndex] skips the in-flight empty assistant shell.
+   */
+  private fun buildPlaneChatMessages(excludeAssistantIndex: Int): List<ControlPlaneChatMessage> {
+    val out = mutableListOf<ControlPlaneChatMessage>()
+    val compact = compactState
+    if (compact != null) {
+      val block = compact.systemBlock
+      if (block.isNotEmpty()) {
+        out.add(ControlPlaneChatMessage(role = "system", content = block))
+      }
+    }
+    val through = compact?.throughTurnIndex
+    for ((idx, turn) in turns.withIndex()) {
+      if (idx == excludeAssistantIndex) continue
+      if (through != null && idx <= through) continue
+      when (turn.role) {
+        ChatTurn.Role.User -> {
+          if (turn.text.isNotEmpty()) {
+            out.add(ControlPlaneChatMessage(role = "user", content = turn.text))
+          }
+        }
+        ChatTurn.Role.Assistant -> {
+          val t = turn.text.trim()
+          if (t.isNotEmpty() && !t.startsWith("(cancelled)") && !t.startsWith("(error)")) {
+            out.add(ControlPlaneChatMessage(role = "assistant", content = turn.text))
+          }
+        }
+        ChatTurn.Role.System -> {
+          if (turn.text.isNotEmpty()) {
+            out.add(ControlPlaneChatMessage(role = "system", content = turn.text))
+          }
+        }
+      }
+    }
+    return out
   }
 
   private fun clearMediaResults() {

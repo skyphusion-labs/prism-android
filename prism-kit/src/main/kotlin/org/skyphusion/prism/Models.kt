@@ -293,6 +293,52 @@ val prismJsonEncode =
 @Serializable
 data class JsonBag(val value: JsonElement)
 
+// --- Conversation compact (playground Worker v0.175.7) ---
+
+/**
+ * Compact summary injected into model context instead of older raw turns.
+ * UI transcript is unchanged; only the wire history shrinks.
+ */
+@Serializable
+data class ConversationCompactState(
+  val summary: String,
+  @SerialName("through_turn_index") val throughTurnIndex: Int,
+  @SerialName("keep_recent") val keepRecent: Int,
+  val model: String,
+  @SerialName("updated_at") val updatedAt: String? = null,
+) {
+  /** System block to prepend when compact is active. */
+  val systemBlock: String
+    get() = ConversationCompact.buildSystemBlock(summary)
+}
+
+/** `POST /api/conversations/:id/compact` body. */
+@Serializable
+data class ConversationCompactRequest(
+  @SerialName("keep_recent") val keepRecent: Int = ConversationCompact.DEFAULT_KEEP_RECENT,
+  val model: String? = null,
+)
+
+/** `POST /api/conversations/:id/compact` response. */
+@Serializable
+data class ConversationCompactResponse(
+  @SerialName("conversation_id") val conversationId: String? = null,
+  val compact: ConversationCompactState? = null,
+  @SerialName("turns_summarized") val turnsSummarized: Int? = null,
+  @SerialName("turns_kept_raw") val turnsKeptRaw: Int? = null,
+  val error: String? = null,
+  val code: String? = null,
+)
+
+/** `DELETE /api/conversations/:id/compact` response. */
+@Serializable
+data class ConversationCompactClearResponse(
+  @SerialName("conversation_id") val conversationId: String? = null,
+  val compact: ConversationCompactState? = null,
+  val cleared: Boolean? = null,
+  val error: String? = null,
+)
+
 // --- Image / video (unit-priced doors) ---
 
 @Serializable

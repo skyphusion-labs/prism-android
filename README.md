@@ -20,13 +20,11 @@ AGPL **Android client** for Prism against the commercial control plane
 
 ## Status
 
-**v0.3.4** -- tracks iOS 0.6.4:
+**v0.3.5** -- conversation **compact** (iOS kit 0.7.1 / web v0.175.7 parity for plane):
 
-- Regenerate last assistant reply (toolbar, bubble, error row) under current model
-- Offline banner via ConnectivityManager; block send/media when offline
-- Starter prompt chips on empty chat; paste clipboard into enroll (token or pcp_)
-- Clear image/video reference; confirm before forgetting device key
-- Prior 0.3.3: prefs, Thinking UI, share, About, health, haptics, media, Play Billing
+- Client-side Compact: summarize older turns with the current chat model; inject system block;
+  keep last 2 pairs raw on the wire. UI transcript unchanged. Expand clears compact.
+- Prior 0.3.4: regenerate, offline banner, starters, paste enroll, clear refs, confirm forget key
 
 Create the three in-app products in Play Console (same product ids as App Store). Production
 redeem needs Worker secret `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` on the plane.

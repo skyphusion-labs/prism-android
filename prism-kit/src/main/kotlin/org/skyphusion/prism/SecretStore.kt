@@ -25,6 +25,11 @@ object SecretStoreKeys {
   const val SELECTED_VIDEO_MODEL = "org.skyphusion.prism.pref.video-model"
   const val USE_STREAM = "org.skyphusion.prism.pref.use-stream"
   const val HIDE_UNSPENDABLE = "org.skyphusion.prism.pref.hide-unspendable"
+
+  /** Playground Worker base URL (compact API host; dual-backend future). */
+  const val PLAYGROUND_BASE_URL = "org.skyphusion.prism.playground.base-url"
+  /** Playground session cookie value (`__Host-prism_session`). */
+  const val PLAYGROUND_SESSION_COOKIE = "org.skyphusion.prism.playground.session-cookie"
 }
 
 /** In-memory store (unit tests + non-Android runtimes). Thread-safe. */

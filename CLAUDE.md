@@ -8,9 +8,9 @@ Guidance for agents working in this repository.
 [prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane). History / RAG /
 artifacts remain on [prism](https://github.com/skyphusion-labs/prism) (not yet wired in the app).
 
-**v0.3.4:** iOS 0.6.4 parity: regenerate last reply, offline banner, starter prompts, paste
-enroll/clipboard, clear media refs, confirm forget key. Grok video **0.4.14+**; Play redeem
-**0.4.16+**.
+**v0.3.5:** conversation compact (plane client-side summary; mirrors prism v0.175.7 /
+iOS 0.7.1). Prior 0.3.4: regenerate, offline, starters, paste enroll. Grok video **0.4.14+**;
+Play redeem **0.4.16+**. Playground compact API not wired (app is plane-only today).
 
 ## Related
 

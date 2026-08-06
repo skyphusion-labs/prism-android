@@ -99,4 +99,54 @@ class ModelsCodecTest {
     assertEquals(true, meters.metered)
     assertNull(meters.stream)
   }
+
+  @Test
+  fun conversationCompactStateDecode() {
+    val json =
+      """
+      {
+        "summary": "Prior context about widgets.",
+        "through_turn_index": 4,
+        "keep_recent": 2,
+        "model": "@cf/meta/llama-3.2-3b-instruct",
+        "updated_at": "2026-08-05T00:00:00.000Z",
+        "future_field": true
+      }
+      """.trimIndent()
+    val state = prismJson.decodeFromString(ConversationCompactState.serializer(), json)
+    assertEquals(4, state.throughTurnIndex)
+    assertEquals(2, state.keepRecent)
+    assertTrue(state.systemBlock.contains("widgets"))
+  }
+
+  @Test
+  fun conversationCompactRequestEncode() {
+    val body = ConversationCompactRequest(keepRecent = 2, model = "m1")
+    val s = prismJsonEncode.encodeToString(ConversationCompactRequest.serializer(), body)
+    assertTrue(s.contains("\"keep_recent\":2"))
+    assertTrue(s.contains("\"model\":\"m1\""))
+  }
+
+  @Test
+  fun conversationCompactResponseDecode() {
+    val json =
+      """
+      {
+        "conversation_id": "c1",
+        "compact": {
+          "summary": "s",
+          "through_turn_index": 1,
+          "keep_recent": 2,
+          "model": "m"
+        },
+        "turns_summarized": 3,
+        "turns_kept_raw": 2
+      }
+      """.trimIndent()
+    val res = prismJson.decodeFromString(ConversationCompactResponse.serializer(), json)
+    assertEquals("c1", res.conversationId)
+    assertEquals(3, res.turnsSummarized)
+    assertEquals(2, res.turnsKeptRaw)
+    assertEquals("s", res.compact?.summary)
+  }
 }

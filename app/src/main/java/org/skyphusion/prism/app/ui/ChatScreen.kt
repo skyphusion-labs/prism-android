@@ -166,6 +166,13 @@ fun ChatScreen(
 
       ModelPicker(vm = vm, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
 
+      if (vm.canCompactConversation || vm.canExpandConversation || vm.isCompacted) {
+        CompactBar(
+          vm = vm,
+          modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+        )
+      }
+
       vm.chatSpendPreview?.let { preview ->
         Text(
           preview,
@@ -312,6 +319,59 @@ fun OfflineBanner(modifier: Modifier = Modifier) {
   )
 }
 
+/** Compact / expand controls (plane client-side summary; UI transcript unchanged). */
+@Composable
+private fun CompactBar(vm: AppViewModel, modifier: Modifier = Modifier) {
+  val view = LocalView.current
+  Row(
+    modifier = modifier.fillMaxWidth().height(32.dp),
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(8.dp),
+  ) {
+    when {
+      vm.isCompacted ->
+        Text(
+          "Compacted",
+          style = MaterialTheme.typography.labelMedium,
+          color = Color(0xFFE65100),
+        )
+      vm.completedChatPairCount >= org.skyphusion.prism.ConversationCompact.MIN_TURNS_TO_COMPACT ->
+        Text(
+          "${vm.completedChatPairCount} turns · compact shrinks model context",
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          maxLines = 1,
+        )
+    }
+    Spacer(Modifier.weight(1f))
+    when {
+      vm.compactBusy ->
+        CircularProgressIndicator(
+          modifier = Modifier.size(16.dp),
+          strokeWidth = 2.dp,
+        )
+      vm.canExpandConversation ->
+        TextButton(
+          onClick = {
+            Haptics.light(view)
+            vm.expandConversation()
+          },
+        ) {
+          Text("Expand")
+        }
+      vm.canCompactConversation ->
+        TextButton(
+          onClick = {
+            Haptics.light(view)
+            vm.compactConversation()
+          },
+        ) {
+          Text("Compact")
+        }
+    }
+  }
+}
+
 @Composable
 private fun ChatEmptyState(vm: AppViewModel, modifier: Modifier = Modifier) {
   val view = LocalView.current
@@ -328,7 +388,8 @@ private fun ChatEmptyState(vm: AppViewModel, modifier: Modifier = Modifier) {
     )
     Text("Start a conversation", style = MaterialTheme.typography.titleMedium)
     Text(
-      "Messages stay on this device. Switch models anytime; context is kept until Clear chat.",
+      "Messages stay on this device. Switch models anytime; context is kept until Clear chat. " +
+        "After a few turns, Compact summarizes older ones for the model.",
       style = MaterialTheme.typography.bodySmall,
       color = MaterialTheme.colorScheme.onSurfaceVariant,
     )

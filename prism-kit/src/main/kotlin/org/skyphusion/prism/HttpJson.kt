@@ -61,9 +61,10 @@ class HttpJson(
     path: String,
     bodyJson: String? = null,
     bearer: String? = null,
+    headers: Map<String, String> = emptyMap(),
     okStatuses: Set<Int> = (200..299).toSet(),
   ): Response {
-    val req = request(method, path, bodyJson, bearer)
+    val req = request(method, path, bodyJson, bearer, headers)
     val res =
       try {
         client.newCall(req).execute()
@@ -83,6 +84,7 @@ class HttpJson(
     path: String,
     body: B? = null,
     bearer: String? = null,
+    headers: Map<String, String> = emptyMap(),
     okStatuses: Set<Int> = (200..299).toSet(),
   ): Pair<T, Map<String, List<String>>> {
     val bodyJson =
@@ -92,12 +94,12 @@ class HttpJson(
         // Use encodeDefaults=true so optional contract flags (stream, platform) ship on the wire.
         prismJsonEncode.encodeToString(body)
       }
-    val res = execute(method, path, bodyJson, bearer, okStatuses)
+    val res = execute(method, path, bodyJson, bearer, headers, okStatuses)
     val raw = res.body?.string().orEmpty()
-    val headers = res.headers.toMultimap()
+    val responseHeaders = res.headers.toMultimap()
     res.close()
     return try {
-      json.decodeFromString<T>(raw) to headers
+      json.decodeFromString<T>(raw) to responseHeaders
     } catch (e: Exception) {
       throw PrismError.Decoding(e.message ?: e.toString(), e)
     }
