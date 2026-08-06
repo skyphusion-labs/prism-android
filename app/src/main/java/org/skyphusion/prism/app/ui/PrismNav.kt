@@ -3,7 +3,9 @@ package org.skyphusion.prism.app.ui
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -23,6 +25,7 @@ import org.skyphusion.prism.app.MediaKind
 fun PlaneShell(
   vm: AppViewModel,
   onOpenSettings: () -> Unit,
+  onOpenSessions: () -> Unit = {},
 ) {
   var tab by rememberSaveable { mutableIntStateOf(0) }
   Scaffold(
@@ -46,14 +49,33 @@ fun PlaneShell(
           icon = { Icon(Icons.Default.Movie, contentDescription = null) },
           label = { Text("Video") },
         )
+        NavigationBarItem(
+          selected = tab == 3,
+          onClick = { tab = 3 },
+          icon = { Icon(Icons.Default.GraphicEq, contentDescription = null) },
+          label = { Text("Audio") },
+        )
+        NavigationBarItem(
+          selected = tab == 4,
+          onClick = { tab = 4 },
+          icon = { Icon(Icons.Default.MusicNote, contentDescription = null) },
+          label = { Text("Music") },
+        )
       }
     },
   ) { padding ->
     androidx.compose.foundation.layout.Box(Modifier.padding(padding)) {
       when (tab) {
-        0 -> ChatScreen(vm = vm, onOpenSettings = onOpenSettings)
+        0 ->
+          ChatScreen(
+            vm = vm,
+            onOpenSettings = onOpenSettings,
+            onOpenSessions = onOpenSessions,
+          )
         1 -> MediaScreen(vm = vm, kind = MediaKind.Image, onOpenSettings = onOpenSettings)
-        else -> MediaScreen(vm = vm, kind = MediaKind.Video, onOpenSettings = onOpenSettings)
+        2 -> MediaScreen(vm = vm, kind = MediaKind.Video, onOpenSettings = onOpenSettings)
+        3 -> AudioScreen(vm = vm, onOpenSettings = onOpenSettings)
+        else -> MusicScreen(vm = vm, onOpenSettings = onOpenSettings)
       }
     }
   }

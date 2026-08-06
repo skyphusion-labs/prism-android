@@ -23,6 +23,9 @@ object SecretStoreKeys {
   const val SELECTED_CHAT_MODEL = "org.skyphusion.prism.pref.chat-model"
   const val SELECTED_IMAGE_MODEL = "org.skyphusion.prism.pref.image-model"
   const val SELECTED_VIDEO_MODEL = "org.skyphusion.prism.pref.video-model"
+  const val SELECTED_SPEECH_MODEL = "org.skyphusion.prism.pref.speech-model"
+  const val SELECTED_STT_MODEL = "org.skyphusion.prism.pref.stt-model"
+  const val SELECTED_MUSIC_MODEL = "org.skyphusion.prism.pref.music-model"
   const val USE_STREAM = "org.skyphusion.prism.pref.use-stream"
   const val HIDE_UNSPENDABLE = "org.skyphusion.prism.pref.hide-unspendable"
 

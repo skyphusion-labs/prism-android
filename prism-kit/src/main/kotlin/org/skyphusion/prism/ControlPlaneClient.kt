@@ -269,6 +269,72 @@ class ControlPlaneClient(
   fun generateVideo(model: String, prompt: String? = null, image: String? = null): VideoGenerationResponse =
     generateVideo(VideoGenerationRequest(model = model, prompt = prompt, image = image))
 
+  // --- Speech TTS / STT / music (unit-priced) ---
+
+  /** `POST /v1/audio/speech` -- metered TTS; returns base64 audio. */
+  fun generateSpeech(request: SpeechGenerationRequest): SpeechGenerationResponse {
+    val key = requireKey()
+    val (body, _) =
+      mediaHttp.send<SpeechGenerationRequest, SpeechGenerationResponse>(
+        "POST",
+        "/v1/audio/speech",
+        body = request,
+        bearer = key,
+      )
+    body.error?.let { err ->
+      throw PrismError.Server(err.message ?: err.code ?: "speech generation error")
+    }
+    if (body.audioBytes() == null) throw PrismError.Server("Empty speech audio payload")
+    return body
+  }
+
+  fun generateSpeech(model: String, input: String): SpeechGenerationResponse =
+    generateSpeech(SpeechGenerationRequest(model = model, input = input))
+
+  /** `POST /v1/audio/transcriptions` -- metered STT; [audio] is base64 or data: URL. */
+  fun transcribe(request: TranscriptionRequest): TranscriptionResponse {
+    val key = requireKey()
+    val (body, _) =
+      mediaHttp.send<TranscriptionRequest, TranscriptionResponse>(
+        "POST",
+        "/v1/audio/transcriptions",
+        body = request,
+        bearer = key,
+      )
+    body.error?.let { err ->
+      throw PrismError.Server(err.message ?: err.code ?: "transcription error")
+    }
+    if (body.text.isNullOrBlank()) throw PrismError.Server("Empty transcription")
+    return body
+  }
+
+  fun transcribe(model: String, audio: String): TranscriptionResponse =
+    transcribe(TranscriptionRequest(model = model, audio = audio))
+
+  /** `POST /v1/music/generations` -- metered music; [audio] URL or base64. */
+  fun generateMusic(request: MusicGenerationRequest): MusicGenerationResponse {
+    val key = requireKey()
+    val (body, _) =
+      mediaHttp.send<MusicGenerationRequest, MusicGenerationResponse>(
+        "POST",
+        "/v1/music/generations",
+        body = request,
+        bearer = key,
+      )
+    body.error?.let { err ->
+      throw PrismError.Server(err.message ?: err.code ?: "music generation error")
+    }
+    if (body.audio.isNullOrBlank()) throw PrismError.Server("Empty music audio payload")
+    return body
+  }
+
+  fun generateMusic(
+    model: String,
+    prompt: String,
+    lyrics: String? = null,
+  ): MusicGenerationResponse =
+    generateMusic(MusicGenerationRequest(model = model, prompt = prompt, lyrics = lyrics))
+
   // --- Store (prepaid credit) ---
 
   /**

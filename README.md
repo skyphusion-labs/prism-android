@@ -20,13 +20,13 @@ AGPL **Android client** for Prism against the commercial control plane
 
 ## Status
 
-**v0.3.5** -- conversation **compact** (prism Worker v0.175.7 / iOS kit 0.7.1):
+**v0.4.0** -- multi-session chats + audio/music doors (iOS 0.7–0.8 catch-up):
 
-- **Plane (default):** client-side Compact summarizes older turns with the current chat model,
-  injects a system block, keeps last 2 pairs raw. UI transcript unchanged; Expand clears.
-- **Playground:** `PrismClient.compactConversation` / `clearConversationCompact` hit
-  `POST|DELETE /api/conversations/:id/compact` when a conversation id is bound.
-- Prior 0.3.4: regenerate, offline banner, starters, paste enroll, clear refs, confirm forget key
+- Local **chat sessions** (device JSON, max 50): list / new / open / delete
+- **Audio** tab: TTS (`POST /v1/audio/speech`) + STT file pick (`POST /v1/audio/transcriptions`)
+- **Music** tab: `POST /v1/music/generations`
+- Bottom nav: Chat · Image · Video · Audio · Music
+- Prior 0.3.5: conversation compact; 0.3.4 regenerate/offline/starters
 
 Create the three in-app products in Play Console (same product ids as App Store). Production
 redeem needs Worker secret `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` on the plane.
