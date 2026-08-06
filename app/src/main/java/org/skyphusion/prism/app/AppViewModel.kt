@@ -448,6 +448,10 @@ class AppViewModel(
     mediaStatus = null
   }
 
+  /** For Play Billing redeem (Settings). Null when not enrolled. */
+  fun planeClientOrNull(): ControlPlaneClient? =
+    if (hasDeviceKey && !client.clientKey.isNullOrBlank()) client else null
+
   private fun handleAuthError(e: Exception) {
     if (e is PrismError.ClientRevoked || e is PrismError.Unauthenticated) {
       clearDeviceKey()

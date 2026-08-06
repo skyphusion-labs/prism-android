@@ -20,15 +20,18 @@ AGPL **Android client** for Prism against the commercial control plane
 
 ## Status
 
-**v0.2.0** -- plane feature parity with iOS media tabs (not playground dual-backend / StoreKit):
+**v0.3.0** -- plane media + **Play Billing** credit top-up (parity with iOS StoreKit path):
 
-- Chat + stream
-- Image generation (`POST /v1/images/generations`) with optional i2i ref
-- Video generation (`POST /v1/videos/generations`) with optional i2v ref
-- Model pickers respect spendable + sort Grok video last; prefer Veo / Seedance Fast defaults
-- User-facing error map (402 balance, 7003, ZDR / plane 0.4.14+)
+- Chat + stream; Image / Video tabs
+- Play Billing consumables `org.skyphusion.prism.credit.{5,20,50}` → `POST /v1/store/redeem`
+  (`platform=google_play`; plane **0.4.16+**)
+- Model pickers: spendable filter, Grok video last, Veo / Seedance Fast defaults
+- User-facing error map (402 balance, 7003, ZDR)
 
-Grok video works when the plane is **0.4.14+** (ZDR `output.upload_url`). Prefer Veo / Seedance Fast if you hit 7003 on older deploys.
+Create the three in-app products in Play Console (same product ids as App Store). Production
+redeem needs Worker secret `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` on the plane.
+
+Grok video works when the plane is **0.4.14+**. Prefer Veo / Seedance Fast if you hit 7003.
 
 ## Commands
 

@@ -12,8 +12,8 @@ android {
     applicationId = "org.skyphusion.prism"
     minSdk = 26
     targetSdk = 35
-    versionCode = 2
-    versionName = "0.2.0"
+    versionCode = 3
+    versionName = "0.3.0"
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
@@ -65,6 +65,7 @@ dependencies {
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
   implementation("androidx.security:security-crypto:1.0.0")
   implementation("io.coil-kt:coil-compose:2.7.0")
+  implementation("com.android.billingclient:billing-ktx:7.1.1")
 
   debugImplementation("androidx.compose.ui:ui-tooling")
 }

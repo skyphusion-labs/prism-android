@@ -353,6 +353,29 @@ data class VideoGenerationResponse(
   val error: ControlPlaneErrorBody? = null,
 )
 
+/** `POST /v1/store/redeem` response (App Store or Google Play). */
+@Serializable
+data class StoreRedeemResponse(
+  val applied: Boolean? = null,
+  @SerialName("transaction_id") val transactionId: String? = null,
+  @SerialName("product_id") val productId: String? = null,
+  @SerialName("credit_granted_micro_usd") val creditGrantedMicroUsd: Long? = null,
+  @SerialName("credit_micro_usd") val creditMicroUsd: Long? = null,
+  @SerialName("spent_micro_usd") val spentMicroUsd: Long? = null,
+  val environment: String? = null,
+  val verified: String? = null,
+  val platform: String? = null,
+  val error: ControlPlaneErrorBody? = null,
+)
+
+@Serializable
+data class GooglePlayRedeemRequest(
+  val platform: String = "google_play",
+  @SerialName("purchase_token") val purchaseToken: String,
+  @SerialName("product_id") val productId: String,
+  @SerialName("package_name") val packageName: String = StoreProducts.PACKAGE_NAME,
+)
+
 /**
  * Map control-plane / transport errors into short UI copy (parity with iOS prismUserFacingError).
  */

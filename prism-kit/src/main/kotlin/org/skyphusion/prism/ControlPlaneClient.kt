@@ -269,6 +269,36 @@ class ControlPlaneClient(
   fun generateVideo(model: String, prompt: String? = null, image: String? = null): VideoGenerationResponse =
     generateVideo(VideoGenerationRequest(model = model, prompt = prompt, image = image))
 
+  // --- Store (prepaid credit) ---
+
+  /**
+   * Redeem a Google Play Billing purchase (`POST /v1/store/redeem`).
+   * Plane 0.4.16+: verifies via Android Publisher when configured.
+   */
+  fun redeemGooglePlay(
+    purchaseToken: String,
+    productId: String,
+    packageName: String = StoreProducts.PACKAGE_NAME,
+  ): StoreRedeemResponse {
+    val key = requireKey()
+    val (body, _) =
+      http.send<GooglePlayRedeemRequest, StoreRedeemResponse>(
+        "POST",
+        "/v1/store/redeem",
+        body =
+          GooglePlayRedeemRequest(
+            purchaseToken = purchaseToken,
+            productId = productId,
+            packageName = packageName,
+          ),
+        bearer = key,
+      )
+    body.error?.let { err ->
+      throw PrismError.Server(err.message ?: err.code ?: "store redeem failed")
+    }
+    return body
+  }
+
   companion object {
     const val PRODUCTION_BASE_URL: String = "https://play-proxy.skyphusion.org"
     /** Client wait above plane non-chat ceiling (180s); matches iOS. */
