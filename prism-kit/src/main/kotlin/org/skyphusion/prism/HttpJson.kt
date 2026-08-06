@@ -113,6 +113,14 @@ class HttpJson(
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
 
+    /** Above plane non-chat ceiling (180s); iOS uses 200s. */
+    fun nonChatClient(): OkHttpClient =
+      defaultClient()
+        .newBuilder()
+        .readTimeout(200, TimeUnit.SECONDS)
+        .writeTimeout(120, TimeUnit.SECONDS)
+        .build()
+
     fun mapHttpError(code: Int, raw: String): PrismError {
       val envelope =
         try {
@@ -130,7 +138,14 @@ class HttpJson(
         if (errCode == "client_revoked") return PrismError.ClientRevoked()
         return PrismError.Unauthenticated
       }
-      return PrismError.HttpStatus(code, message)
+      // Prefer API error code in the message so prismUserFacingError can branch.
+      val labeled =
+        if (!errCode.isNullOrBlank() && !message.isNullOrBlank() && !message.contains(errCode)) {
+          "$errCode: $message"
+        } else {
+          message
+        }
+      return PrismError.HttpStatus(code, labeled)
     }
   }
 }

@@ -46,6 +46,50 @@ data class ControlPlaneModel(
   @SerialName("max_output_tokens") val maxOutputTokens: Int? = null,
   /** Whether the plane will run this model today (false => grey out, do not drop). */
   val spendable: Boolean? = null,
+  /** Picker hints: `text-to-image`, `image-input`, `image-input-required`, `text-to-video`, … */
+  val capabilities: List<String>? = null,
+  val price: ControlPlaneTokenPrice? = null,
+  @SerialName("unit_price") val unitPrice: ControlPlaneUnitPrice? = null,
+) {
+  fun priceSnippet(): String? {
+    unitPrice?.microUsdPerUnit?.let { u ->
+      val usd = u / 1_000_000.0
+      val unitName = unitPrice.unit ?: "unit"
+      if (usd == 0.0) return "included"
+      return if (usd >= 0.01) String.format("$%.2f/%s", usd, unitName)
+      else String.format("$%.4f/%s", usd, unitName)
+    }
+    val inp = price?.inputMicroUsdPerMTok
+    val out = price?.outputMicroUsdPerMTok
+    if (inp != null && out != null) {
+      return String.format("$%.2f/$%.2f /MTok", inp / 1e6, out / 1e6)
+    }
+    return null
+  }
+
+  fun acceptsImageInput(): Boolean {
+    val caps = capabilities.orEmpty()
+    return caps.any { it == "image-input" || it == "image-input-required" }
+  }
+
+  fun requiresImageInput(): Boolean =
+    capabilities.orEmpty().contains("image-input-required")
+}
+
+@Serializable
+data class ControlPlaneTokenPrice(
+  @SerialName("input_micro_usd_per_mtok") val inputMicroUsdPerMTok: Long? = null,
+  @SerialName("output_micro_usd_per_mtok") val outputMicroUsdPerMTok: Long? = null,
+  @SerialName("priced_at") val pricedAt: String? = null,
+  val source: String? = null,
+)
+
+@Serializable
+data class ControlPlaneUnitPrice(
+  @SerialName("micro_usd_per_unit") val microUsdPerUnit: Long? = null,
+  val unit: String? = null,
+  @SerialName("priced_at") val pricedAt: String? = null,
+  val source: String? = null,
 )
 
 @Serializable
@@ -248,3 +292,90 @@ val prismJsonEncode =
 /** Holder for raw JSON elements we do not model yet (forward-compat escape). */
 @Serializable
 data class JsonBag(val value: JsonElement)
+
+// --- Image / video (unit-priced doors) ---
+
+@Serializable
+data class ImageGenerationRequest(
+  val model: String,
+  val prompt: String,
+  /** Optional https or data: URL for i2i / edit models. */
+  val image: String? = null,
+)
+
+@Serializable
+data class ImageGenerationResponse(
+  val created: Long? = null,
+  val model: String? = null,
+  val data: List<ImageGenerationData>? = null,
+  val error: ControlPlaneErrorBody? = null,
+) {
+  @Serializable
+  data class ImageGenerationData(
+    @SerialName("b64_json") val b64Json: String? = null,
+    val url: String? = null,
+  )
+
+  /** Raw base64 when the field is real base64 (not an https URL). */
+  val firstBase64: String?
+    get() {
+      val raw = data?.firstOrNull()?.b64Json?.takeIf { it.isNotEmpty() } ?: return null
+      if (raw.startsWith("http://") || raw.startsWith("https://")) return null
+      if (raw.startsWith("data:image/")) {
+        val idx = raw.indexOf("base64,")
+        if (idx >= 0) return raw.substring(idx + "base64,".length)
+      }
+      return raw
+    }
+
+  /** Explicit `url` or legacy URL stuffed into `b64_json`. */
+  val firstDisplayUrl: String?
+    get() {
+      data?.firstOrNull()?.url?.takeIf { it.isNotEmpty() }?.let { return it }
+      val raw = data?.firstOrNull()?.b64Json
+      if (raw != null && (raw.startsWith("http://") || raw.startsWith("https://"))) return raw
+      return null
+    }
+}
+
+@Serializable
+data class VideoGenerationRequest(
+  val model: String,
+  val prompt: String? = null,
+  /** Optional i2v source (data: or https:). */
+  val image: String? = null,
+)
+
+@Serializable
+data class VideoGenerationResponse(
+  val model: String? = null,
+  val video: String? = null,
+  val error: ControlPlaneErrorBody? = null,
+)
+
+/**
+ * Map control-plane / transport errors into short UI copy (parity with iOS prismUserFacingError).
+ */
+fun prismUserFacingError(error: Throwable): String {
+  val msg = error.message.orEmpty()
+  val lower = msg.lowercase()
+  return when {
+    error is PrismError.Unauthenticated -> "Not authenticated. Re-enroll or import a pcp_ key."
+    error is PrismError.ClientRevoked -> "Device key revoked. Re-enroll."
+    lower.contains("quota_exhausted") || lower.contains("below this model's unit rate") ||
+      lower.contains("402") ->
+      "Not enough balance for this model. Top up credit or pick a cheaper model."
+    lower.contains("7003") ->
+      "Provider rejected the request (7003). Prefer Veo or Seedance Fast for video."
+    lower.contains("zdr") || lower.contains("upload_url") || lower.contains("0.4.14") ->
+      "Grok video needs plane 0.4.14+ (ZDR upload path). Prefer Veo / Seedance Fast until then."
+    lower.contains("requires an image") ||
+      (lower.contains("i2v") && lower.contains("image")) ->
+      "This model needs a reference image. Add a photo or https/data URL, or pick Veo / Seedance."
+    lower.contains("model_unpriced") ->
+      "Model has no unit rate yet. Refresh models or pick another."
+    error is PrismError.HttpStatus -> error.bodyMessage?.takeIf { it.isNotBlank() } ?: msg
+    msg.isNotBlank() -> msg
+    else -> error.toString()
+  }
+}

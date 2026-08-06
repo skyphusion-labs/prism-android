@@ -28,7 +28,8 @@ import org.skyphusion.prism.app.AppViewModel
 
 @Composable
 fun EnrollScreen(vm: AppViewModel) {
-  var showImport by remember { mutableStateOf(false) }
+  // Import is primary (operator pcp_ keys); one-time enroll under advanced.
+  var showEnroll by remember { mutableStateOf(false) }
   var importKey by remember { mutableStateOf("") }
 
   Column(
@@ -41,7 +42,8 @@ fun EnrollScreen(vm: AppViewModel) {
   ) {
     Text("Prism", style = MaterialTheme.typography.headlineMedium)
     Text(
-      "Metered chat via the control plane. Enroll this device with a one-time token, or import an existing pcp_ key.",
+      "Metered chat, image, and video via the control plane. Paste a pcp_ device key, " +
+        "or use Advanced for a one-time enrollment token.",
       style = MaterialTheme.typography.bodyMedium,
       color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
       modifier = Modifier.padding(top = 8.dp, bottom = 24.dp),
@@ -56,17 +58,20 @@ fun EnrollScreen(vm: AppViewModel) {
     )
     Spacer(Modifier.height(12.dp))
     OutlinedTextField(
-      value = vm.enrollmentToken,
-      onValueChange = { vm.enrollmentToken = it },
-      label = { Text("Enrollment token") },
+      value = importKey,
+      onValueChange = { importKey = it },
+      label = { Text("pcp_ device key") },
       singleLine = true,
       visualTransformation = PasswordVisualTransformation(),
       modifier = Modifier.fillMaxWidth(),
     )
-    Spacer(Modifier.height(16.dp))
+    Spacer(Modifier.height(12.dp))
     Button(
-      onClick = { vm.enroll() },
-      enabled = !vm.isBusy && vm.enrollmentToken.isNotBlank(),
+      onClick = {
+        vm.importDeviceKey(importKey)
+        importKey = ""
+      },
+      enabled = !vm.isBusy && AppViewModel.normalizeSecret(importKey).startsWith("pcp_"),
       modifier = Modifier.fillMaxWidth(),
     ) {
       if (vm.isBusy) {
@@ -76,36 +81,40 @@ fun EnrollScreen(vm: AppViewModel) {
           color = MaterialTheme.colorScheme.onPrimary,
         )
       } else {
-        Text("Enroll this device")
+        Text("Import key")
       }
     }
 
     TextButton(
-      onClick = { showImport = !showImport },
+      onClick = { showEnroll = !showEnroll },
       modifier = Modifier.align(Alignment.CenterHorizontally),
     ) {
-      Text(if (showImport) "Hide import" else "Import existing device key")
+      Text(if (showEnroll) "Hide advanced" else "Advanced: one-time enrollment token")
     }
 
-    if (showImport) {
+    if (showEnroll) {
+      Text(
+        "Enrollment tokens are single-use. Do not paste a pcp_ key here " +
+          "(if you do, it is imported automatically).",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+        modifier = Modifier.padding(bottom = 8.dp),
+      )
       OutlinedTextField(
-        value = importKey,
-        onValueChange = { importKey = it },
-        label = { Text("pcp_ device key") },
+        value = vm.enrollmentToken,
+        onValueChange = { vm.enrollmentToken = it },
+        label = { Text("Enrollment token (enr_…)") },
         singleLine = true,
         visualTransformation = PasswordVisualTransformation(),
         modifier = Modifier.fillMaxWidth(),
       )
-      Spacer(Modifier.height(8.dp))
+      Spacer(Modifier.height(12.dp))
       Button(
-        onClick = {
-          vm.importDeviceKey(importKey)
-          importKey = ""
-        },
-        enabled = !vm.isBusy && importKey.startsWith("pcp_"),
+        onClick = { vm.enroll() },
+        enabled = !vm.isBusy && vm.enrollmentToken.isNotBlank(),
         modifier = Modifier.fillMaxWidth(),
       ) {
-        Text("Import key")
+        Text("Enroll this device")
       }
     }
 

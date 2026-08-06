@@ -195,6 +195,31 @@ class ControlPlaneClientTest {
     }
 
   @Test
+  fun generateImageAndVideo() {
+    server.enqueue(
+      MockResponse()
+        .setResponseCode(200)
+        .setBody("""{"created":1,"data":[{"url":"https://example.com/i.png"}]}"""),
+    )
+    server.enqueue(
+      MockResponse()
+        .setResponseCode(200)
+        .setBody("""{"model":"xai/grok-imagine-video","video":"https://example.com/v.mp4"}"""),
+    )
+    val c = client()
+    val img = c.generateImage(model = "xai/grok-imagine-image", prompt = "cube")
+    assertEquals("https://example.com/i.png", img.firstDisplayUrl)
+    val imgReq = server.takeRequest()
+    assertEquals("/v1/images/generations", imgReq.path)
+    assertTrue(imgReq.body.readUtf8().contains("cube"))
+
+    val vid = c.generateVideo(model = "xai/grok-imagine-video", prompt = "waves")
+    assertEquals("https://example.com/v.mp4", vid.video)
+    val vidReq = server.takeRequest()
+    assertEquals("/v1/videos/generations", vidReq.path)
+  }
+
+  @Test
   fun meAndUsage() {
     server.enqueue(
       MockResponse()
