@@ -176,6 +176,19 @@ class AppViewModel(
   var usageError by mutableStateOf<String?>(null)
   var chatSttBusy by mutableStateOf(false)
     private set
+  /** Last plane request cost from `prism-usage-micro-usd` (non-stream). */
+  var lastRequestCost by mutableStateOf<String?>(null)
+  /** Face unlock gate (iOS biometricLockEnabled). */
+  var biometricLockEnabled by mutableStateOf(
+    secrets.get(SecretStoreKeys.BIOMETRIC_LOCK_ENABLED)?.let {
+      it == "1" || it.equals("true", true)
+    } ?: false,
+  )
+    private set
+  /** True until the user unlocks after launch / background. */
+  var isBiometricallyLocked by mutableStateOf(false)
+  var liveSttStatus by mutableStateOf<String?>(null)
+  private val liveSttFinals = mutableListOf<String>()
   var useStream by mutableStateOf(
     secrets.get(SecretStoreKeys.USE_STREAM)?.let { it != "0" && !it.equals("false", true) } ?: true,
   )
@@ -481,20 +494,26 @@ class AppViewModel(
         playgroundAuthenticated = true
       }
     }
-    probePlaneHealth()
-    when (backend) {
-      BackendKind.ControlPlane ->
-        if (hasDeviceKey) {
-          refreshAccount()
-          refreshModels()
-        }
-      BackendKind.Playground -> refreshModels()
+    // Gate UI before network when biometric lock is on with a stored key.
+    if (biometricLockEnabled && hasDeviceKey) {
+      isBiometricallyLocked = true
+    }
+    if (!isBiometricallyLocked) {
+      probePlaneHealth()
+      when (backend) {
+        BackendKind.ControlPlane ->
+          if (hasDeviceKey) {
+            refreshAccount()
+            refreshModels()
+          }
+        BackendKind.Playground -> refreshModels()
+      }
     }
   }
 
   override fun onCleared() {
     stopNetworkMonitor()
-    stopLiveStt()
+    stopLiveStt(commit = false)
     try {
       speechPlayer?.release()
     } catch (_: Exception) {
@@ -503,10 +522,29 @@ class AppViewModel(
     super.onCleared()
   }
 
-  /** Foreground resume: health + balance when enrolled (iOS onBecomeActive). */
+  /** Foreground resume: health + balance when unlocked (iOS onBecomeActive). */
   fun onBecomeActive() {
+    if (isBiometricallyLocked) return
     probePlaneHealth()
     if (backend == BackendKind.ControlPlane && hasDeviceKey) refreshAccount()
+  }
+
+  /** Call when scene enters background so the next open requires biometrics. */
+  fun lockIfNeeded() {
+    if (biometricLockEnabled && hasDeviceKey) {
+      isBiometricallyLocked = true
+    }
+  }
+
+  fun updateBiometricLockEnabled(on: Boolean) {
+    biometricLockEnabled = on
+    secrets.set(SecretStoreKeys.BIOMETRIC_LOCK_ENABLED, if (on) "1" else "0")
+    isBiometricallyLocked = on && hasDeviceKey
+  }
+
+  fun unlockBiometrics() {
+    isBiometricallyLocked = false
+    onBecomeActive()
   }
 
   fun updateShowDeveloperSettings(on: Boolean) {
@@ -1201,10 +1239,31 @@ class AppViewModel(
         planeUsageLines.clear()
         me.usage?.dualPoolLines()?.let { planeUsageLines.addAll(it) }
         me.client?.label?.let { if (deviceLabel.isBlank()) deviceLabel = it }
+        publishWidgetBalance(balance)
       } catch (e: Exception) {
         handleAuthError(e)
         // non-fatal for banner
       }
+    }
+  }
+
+  /** Push spendable line to home-screen widget prefs (no secrets). */
+  private fun publishWidgetBalance(text: String?) {
+    try {
+      val prefs =
+        appContext.getSharedPreferences(SecretStoreKeys.WIDGET_PREFS, Context.MODE_PRIVATE)
+      prefs
+        .edit()
+        .putString(SecretStoreKeys.WIDGET_BALANCE, text ?: "—")
+        .putString(
+          SecretStoreKeys.WIDGET_UPDATED_AT,
+          "Updated " +
+            java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+              .format(java.util.Date()),
+        )
+        .apply()
+      BalanceWidgetProvider.requestUpdate(appContext)
+    } catch (_: Exception) {
     }
   }
 
@@ -1626,6 +1685,7 @@ class AppViewModel(
   ) {
     val history = buildPlaneChatMessages(excludeAssistantIndex = assistantIndex)
     if (useStream && model?.streaming != false) {
+      lastRequestCost = "Streamed · cost in balance"
       val req =
         ControlPlaneChatRequest(
           model = modelId,
@@ -1663,19 +1723,27 @@ class AppViewModel(
       val empty =
         turns.getOrNull(assistantIndex)?.text.isNullOrEmpty()
       if (empty) {
-        val text =
+        val res =
           withContext(Dispatchers.IO) {
-            client.chat(model = modelId, messages = history)
+            client.chatCompletions(
+              ControlPlaneChatRequest(model = modelId, messages = history, stream = false),
+            )
           }
+        val text = res.response.firstContent.orEmpty()
         if (text.isEmpty()) throw PrismError.Server("Empty stream completion")
         turns[assistantIndex] = assistant.copy(text = text)
+        lastRequestCost = res.meters.costDescription()
       }
     } else {
-      val reply =
+      val res =
         withContext(Dispatchers.IO) {
-          client.chat(model = modelId, messages = history)
+          client.chatCompletions(
+            ControlPlaneChatRequest(model = modelId, messages = history, stream = false),
+          )
         }
+      val reply = res.response.firstContent.orEmpty()
       turns[assistantIndex] = assistant.copy(text = reply)
+      lastRequestCost = res.meters.costDescription()
     }
   }
 
@@ -2051,16 +2119,33 @@ class AppViewModel(
     return sessionStore.exportJson(sessions.toList(), currentSessionId)
   }
 
-  /** Import sessions from JSON (merge by id). */
-  fun importSessionsJson(data: ByteArray) {
+  /** Decode without applying (import confirmation UX). */
+  fun previewImportSessionsJson(data: ByteArray): ChatImportPreview =
+    sessionStore.previewFromJson(data)
+
+  /**
+   * Import sessions from JSON.
+   * [replace] false = merge by id (file wins); true = discard local list first.
+   */
+  fun importSessionsJson(data: ByteArray, replace: Boolean = false) {
     try {
       persistCurrentSession()
-      val merged = sessionStore.mergeFromJson(sessions.toList(), data)
+      val next =
+        if (replace) {
+          sessionStore.replaceFromJson(data)
+        } else {
+          sessionStore.mergeFromJson(sessions.toList(), data)
+        }
       sessions.clear()
-      sessions.addAll(merged)
+      sessions.addAll(next)
       ensureCurrentSession()
       saveSessionsToDisk()
-      banner = "Imported chats (${merged.size} total)."
+      banner =
+        if (replace) {
+          "Replaced local chats (${next.size} total)."
+        } else {
+          "Merged chats (${next.size} total)."
+        }
     } catch (e: Exception) {
       errorMessage = e.message ?: "Could not import sessions"
     }
@@ -2274,22 +2359,26 @@ class AppViewModel(
 
   /**
    * Live STT via plane WebSocket (`GET /v1/stt/stream`, Bearer pcp_).
-   * Streams linear16 PCM @ 16 kHz; partials in [liveSttPartial], finals append [lastTranscript].
+   * Streams linear16 PCM @ 16 kHz; partials in [liveSttPartial]; stop(commit=true) → draft.
    */
   fun startLiveStt() {
     if (!hasDeviceKey || liveSttRunning || speechBusy || backend != BackendKind.ControlPlane) {
       if (backend != BackendKind.ControlPlane) {
         speechError = "Live STT needs the control plane."
+        errorMessage = "Live STT needs the control plane."
       }
       return
     }
     if (!isNetworkSatisfied) {
       speechError = "No network connection. Reconnect and try again."
+      errorMessage = "No network connection."
       return
     }
-    stopLiveStt()
+    stopLiveStt(commit = false)
     speechError = null
+    liveSttFinals.clear()
     liveSttPartial = ""
+    liveSttStatus = "Connecting…"
     speechStatus = "Live STT connecting…"
     val session =
       LiveSttSession(
@@ -2297,30 +2386,33 @@ class AppViewModel(
         onPartial = { t ->
           viewModelScope.launch {
             liveSttPartial = t
+            liveSttStatus = "Listening…"
             speechStatus = "Listening…"
           }
         },
         onFinal = { t ->
           viewModelScope.launch {
-            val prev = lastTranscript?.trim().orEmpty()
-            lastTranscript =
-              if (prev.isEmpty()) t else "$prev $t".trim()
+            val trimmed = t.trim()
+            if (trimmed.isNotEmpty()) liveSttFinals.add(trimmed)
             liveSttPartial = ""
+            liveSttStatus = "Listening…"
             speechStatus = "Live final"
           }
         },
         onError = { msg ->
           viewModelScope.launch {
             speechError = msg
+            errorMessage = msg
             speechStatus = null
+            liveSttStatus = null
             liveSttRunning = false
           }
         },
         onClosed = {
           viewModelScope.launch {
             liveSttRunning = false
-            if (speechStatus == "Listening…" || speechStatus == "Live STT connecting…") {
-              speechStatus = "Live STT stopped"
+            if (liveSttStatus == "Listening…" || liveSttStatus == "Connecting…") {
+              liveSttStatus = "Stopped"
             }
           }
         },
@@ -2330,11 +2422,29 @@ class AppViewModel(
     session.start()
   }
 
-  fun stopLiveStt() {
+  /**
+   * Stop live STT. When [commit] is true, append finals + partial into the chat draft.
+   */
+  fun stopLiveStt(commit: Boolean = true) {
     liveSttSession?.stop()
     liveSttSession = null
-    liveSttRunning = false
+    val partial = liveSttPartial.trim()
+    if (commit) {
+      val pieces = liveSttFinals.toList() + listOfNotNull(partial.takeIf { it.isNotEmpty() })
+      val t = pieces.joinToString(" ").trim()
+      if (t.isNotEmpty()) {
+        lastTranscript = t
+        draft = if (draft.isBlank()) t else "$draft $t"
+        banner = "Live transcript added to draft"
+      }
+    }
+    liveSttFinals.clear()
     liveSttPartial = ""
+    liveSttRunning = false
+    liveSttStatus = null
+    if (speechStatus?.startsWith("Live") == true || speechStatus == "Listening…") {
+      speechStatus = "Live STT stopped"
+    }
   }
 
   fun generateMusic() {

@@ -7,6 +7,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.skyphusion.prism.ConversationCompactState
 
+/** Preview of a chat JSON import (count + sample title). */
+data class ChatImportPreview(val count: Int, val titleSample: String?)
+
 /** One local chat session (device-only; not on the plane). */
 data class ChatSession(
   val id: String = UUID.randomUUID().toString(),
@@ -202,14 +205,33 @@ class ChatSessionStore(context: Context) {
 
   /** Merge imported sessions by id; returns merged list sorted by updatedAt. */
   fun mergeFromJson(existing: List<ChatSession>, data: ByteArray): List<ChatSession> {
+    val incoming = decodeSessions(data)
+    val byId = existing.associateBy { it.id }.toMutableMap()
+    for (s in incoming) byId[s.id] = s
+    return byId.values.sortedByDescending { it.updatedAtMs }.take(SESSION_CAP)
+  }
+
+  /** Replace local list with file contents. */
+  fun replaceFromJson(data: ByteArray): List<ChatSession> =
+    decodeSessions(data).sortedByDescending { it.updatedAtMs }.take(SESSION_CAP)
+
+  /** Preview without applying. */
+  fun previewFromJson(data: ByteArray): ChatImportPreview {
+    val list = decodeSessions(data)
+    return ChatImportPreview(
+      count = list.size,
+      titleSample = list.firstOrNull()?.title,
+    )
+  }
+
+  private fun decodeSessions(data: ByteArray): List<ChatSession> {
     val root = JSONObject(String(data, Charsets.UTF_8))
     val arr = root.optJSONArray("sessions") ?: JSONArray()
-    val byId = existing.associateBy { it.id }.toMutableMap()
+    val list = mutableListOf<ChatSession>()
     for (i in 0 until arr.length()) {
-      val s = sessionFromJson(arr.getJSONObject(i))
-      byId[s.id] = s
+      list.add(sessionFromJson(arr.getJSONObject(i)))
     }
-    return byId.values.sortedByDescending { it.updatedAtMs }.take(SESSION_CAP)
+    return list
   }
 
   companion object {

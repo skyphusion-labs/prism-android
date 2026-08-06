@@ -12,8 +12,8 @@ android {
     applicationId = "org.skyphusion.prism"
     minSdk = 26
     targetSdk = 35
-    versionCode = 15
-    versionName = "0.7.0"
+    versionCode = 16
+    versionName = "0.8.0"
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
@@ -59,6 +59,7 @@ dependencies {
   implementation("androidx.compose.material3:material3")
   implementation("androidx.compose.material:material-icons-extended")
   implementation("androidx.activity:activity-compose:1.10.1")
+  implementation("androidx.fragment:fragment-ktx:1.8.8")
   implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.2")
   implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.2")
   implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.2")
@@ -66,6 +67,7 @@ dependencies {
   implementation("androidx.security:security-crypto:1.0.0")
   implementation("io.coil-kt:coil-compose:2.7.0")
   implementation("com.android.billingclient:billing-ktx:7.1.1")
+  implementation("androidx.biometric:biometric:1.1.0")
 
   debugImplementation("androidx.compose.ui:ui-tooling")
 }

@@ -31,6 +31,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -41,6 +45,7 @@ import java.util.Date
 import java.util.Locale
 import org.skyphusion.prism.app.AppViewModel
 import org.skyphusion.prism.app.BackendKind
+import org.skyphusion.prism.app.ChatImportPreview
 import org.skyphusion.prism.app.ChatSession
 import org.skyphusion.prism.app.ChatSessionStore
 import org.skyphusion.prism.app.Haptics
@@ -55,6 +60,8 @@ fun SessionListScreen(
   val view = LocalView.current
   val context = LocalContext.current
   val timeFmt = SimpleDateFormat("MMM d · HH:mm", Locale.getDefault())
+  var pendingImport by remember { mutableStateOf<ByteArray?>(null) }
+  var importPreview by remember { mutableStateOf<ChatImportPreview?>(null) }
   val importSessions =
     rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
       if (uri == null) return@rememberLauncherForActivityResult
@@ -62,12 +69,70 @@ fun SessionListScreen(
         val bytes =
           context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
             ?: return@rememberLauncherForActivityResult
-        vm.importSessionsJson(bytes)
-        Haptics.success(view)
+        importPreview = vm.previewImportSessionsJson(bytes)
+        pendingImport = bytes
       } catch (e: Exception) {
         vm.errorMessage = e.message ?: "Import failed"
+        pendingImport = null
+        importPreview = null
       }
     }
+
+  if (pendingImport != null && importPreview != null) {
+    val p = importPreview!!
+    androidx.compose.material3.AlertDialog(
+      onDismissRequest = {
+        pendingImport = null
+        importPreview = null
+      },
+      title = {
+        Text("Import ${p.count} chat${if (p.count == 1) "" else "s"}?")
+      },
+      text = {
+        Text(
+          buildString {
+            append("File sample: ${p.titleSample ?: "(empty)"}. ")
+            append("Merge keeps local chats and overwrites matching ids. ")
+            append("Replace discards the current local list.")
+          },
+        )
+      },
+      confirmButton = {
+        TextButton(
+          onClick = {
+            pendingImport?.let { vm.importSessionsJson(it, replace = false) }
+            pendingImport = null
+            importPreview = null
+            Haptics.success(view)
+          },
+        ) {
+          Text("Merge (file wins on id clash)")
+        }
+      },
+      dismissButton = {
+        Row {
+          TextButton(
+            onClick = {
+              pendingImport?.let { vm.importSessionsJson(it, replace = true) }
+              pendingImport = null
+              importPreview = null
+              Haptics.success(view)
+            },
+          ) {
+            Text("Replace all", color = MaterialTheme.colorScheme.error)
+          }
+          TextButton(
+            onClick = {
+              pendingImport = null
+              importPreview = null
+            },
+          ) {
+            Text("Cancel")
+          }
+        }
+      },
+    )
+  }
 
   Scaffold(
     topBar = {
