@@ -15,18 +15,18 @@ AGPL **Android client** for Prism against the commercial control plane
 
 | Module | Role |
 |--------|------|
-| `prism-kit` | JVM library: `ControlPlaneClient` (chat SSE, image, video), `SecretStore` |
+| `prism-kit` | JVM: `ControlPlaneClient`, `PrismClient` (playground compact), `SecretStore` |
 | `app` | Compose shell: enroll, **Chat / Image / Video** tabs, settings |
 
 ## Status
 
-**v0.3.4** -- tracks iOS 0.6.4:
+**v0.3.5** -- conversation **compact** (prism Worker v0.175.7 / iOS kit 0.7.1):
 
-- Regenerate last assistant reply (toolbar, bubble, error row) under current model
-- Offline banner via ConnectivityManager; block send/media when offline
-- Starter prompt chips on empty chat; paste clipboard into enroll (token or pcp_)
-- Clear image/video reference; confirm before forgetting device key
-- Prior 0.3.3: prefs, Thinking UI, share, About, health, haptics, media, Play Billing
+- **Plane (default):** client-side Compact summarizes older turns with the current chat model,
+  injects a system block, keeps last 2 pairs raw. UI transcript unchanged; Expand clears.
+- **Playground:** `PrismClient.compactConversation` / `clearConversationCompact` hit
+  `POST|DELETE /api/conversations/:id/compact` when a conversation id is bound.
+- Prior 0.3.4: regenerate, offline banner, starters, paste enroll, clear refs, confirm forget key
 
 Create the three in-app products in Play Console (same product ids as App Store). Production
 redeem needs Worker secret `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` on the plane.
@@ -56,6 +56,12 @@ val models = client.listModels().data.filter { it.spendable != false }
 val reply = client.chat(model = models.first { it.modality == "chat" }.id, user = "Hello")
 val img = client.generateImage(model = "xai/grok-imagine-image", prompt = "a red cube")
 val vid = client.generateVideo(model = "google/veo-3.1-fast", prompt = "ocean waves")
+
+// Playground Worker compact (session cookie or Access headers)
+val play = PrismClient.create()
+play.restoreSessionToken(sessionToken)
+play.compactConversation(id = "conv_…", keepRecent = 2, model = "…")
+play.clearConversationCompact(id = "conv_…")
 ```
 
 ## Related
