@@ -27,11 +27,24 @@ data class ChatTurn(
   val id: String = UUID.randomUUID().toString(),
   val role: Role,
   var text: String,
+  val modelId: String? = null,
 ) {
   enum class Role { User, Assistant, System }
 }
 
 enum class MediaKind { Image, Video }
+
+/** One generated image/video kept in-session for history / re-use (cap 20). */
+data class MediaHistoryItem(
+  val id: String = UUID.randomUUID().toString(),
+  val kind: MediaKind,
+  val model: String,
+  val prompt: String,
+  val createdAtMs: Long = System.currentTimeMillis(),
+  val imageBase64: String? = null,
+  val imageUrl: String? = null,
+  val videoUrl: String? = null,
+)
 
 /**
  * Control-plane shell: enroll, chat, image, video (parity with prism-ios plane tabs).
@@ -80,7 +93,16 @@ class AppViewModel(
   var lastImageUrl by mutableStateOf<String?>(null)
   var lastImageBase64 by mutableStateOf<String?>(null)
   var lastVideoUrl by mutableStateOf<String?>(null)
+  var mediaElapsedSeconds by mutableStateOf(0)
+    private set
+  var mediaHistory = mutableStateListOf<MediaHistoryItem>()
+    private set
+  var canRetryLastChat by mutableStateOf(false)
+    private set
+  private var lastFailedChatText: String? = null
   private var mediaJob: Job? = null
+  private var mediaTimerJob: Job? = null
+  private var chatJob: Job? = null
 
   val imageModels: List<ControlPlaneModel>
     get() =
@@ -113,11 +135,43 @@ class AppViewModel(
           }.thenBy { it.displayName ?: it.id },
         )
 
+  val chatModels: List<ControlPlaneModel>
+    get() =
+      models
+        .filter { it.modality == "chat" || it.modality == null }
+        .filter { !hideUnspendable || it.spendable != false }
+
+  val selectedChatModel: ControlPlaneModel?
+    get() = chatModels.firstOrNull { it.id == selectedModelId } ?: chatModels.firstOrNull()
+
+  val selectedImageModel: ControlPlaneModel?
+    get() = imageModels.firstOrNull { it.id == selectedImageModelId } ?: imageModels.firstOrNull()
+
+  val selectedVideoModel: ControlPlaneModel?
+    get() = videoModels.firstOrNull { it.id == selectedVideoModelId } ?: videoModels.firstOrNull()
+
+  /** Unit-price preview for image/video (catalog priceSnippet). */
+  fun spendPreview(model: ControlPlaneModel?): String? {
+    val p = model?.priceSnippet() ?: return null
+    if (p == "included") return "Est. cost: included (no unit charge on this plan rate)"
+    return "Est. cost: $p per request (metered after success)"
+  }
+
+  val imageSpendPreview: String? get() = spendPreview(selectedImageModel)
+  val videoSpendPreview: String? get() = spendPreview(selectedVideoModel)
+  val chatSpendPreview: String? get() = spendPreview(selectedChatModel)
+
   init {
     if (hasDeviceKey) {
       refreshAccount()
       refreshModels()
     }
+  }
+
+  /** Change chat model without clearing transcript (iOS parity). */
+  fun selectChatModel(modelId: String) {
+    if (chatModels.none { it.id == modelId }) return
+    selectedModelId = modelId
   }
 
   fun enroll() {
@@ -255,11 +309,31 @@ class AppViewModel(
 
   fun clearChat() {
     turns.clear()
+    clearChatFailure()
+  }
+
+  fun retryLastFailedChat() {
+    val text = lastFailedChatText ?: return
+    if (text.isEmpty()) return
+    draft = text
+    canRetryLastChat = false
+    send()
+  }
+
+  fun cancelChat() {
+    chatJob?.cancel()
+    chatJob = null
+    isBusy = false
+    val last = turns.lastOrNull()
+    if (last != null && last.role == ChatTurn.Role.Assistant && last.text.isEmpty()) {
+      turns[turns.lastIndex] = last.copy(text = "(cancelled)")
+    }
+    errorMessage = "Cancelled"
   }
 
   fun send() {
     val text = draft.trim()
-    val modelId = selectedModelId
+    val modelId = selectedModelId ?: selectedChatModel?.id
     if (text.isEmpty() || modelId == null || isBusy) return
     val model = models.firstOrNull { it.id == modelId }
     if (model?.spendable == false) {
@@ -268,77 +342,82 @@ class AppViewModel(
     }
 
     draft = ""
+    clearChatFailure()
     turns.add(ChatTurn(role = ChatTurn.Role.User, text = text))
-    val assistant = ChatTurn(role = ChatTurn.Role.Assistant, text = "")
+    val assistant = ChatTurn(role = ChatTurn.Role.Assistant, text = "", modelId = modelId)
     turns.add(assistant)
     val assistantIndex = turns.lastIndex
 
-    viewModelScope.launch {
-      isBusy = true
-      errorMessage = null
-      try {
-        val history =
-          turns.dropLast(1).mapNotNull { t ->
-            when (t.role) {
-              ChatTurn.Role.User -> ControlPlaneChatMessage("user", t.text)
-              ChatTurn.Role.Assistant ->
-                if (t.text.isNotEmpty()) ControlPlaneChatMessage("assistant", t.text) else null
-              ChatTurn.Role.System -> ControlPlaneChatMessage("system", t.text)
+    chatJob?.cancel()
+    chatJob =
+      viewModelScope.launch {
+        isBusy = true
+        errorMessage = null
+        try {
+          val history =
+            turns.dropLast(1).mapNotNull { t ->
+              when (t.role) {
+                ChatTurn.Role.User -> ControlPlaneChatMessage("user", t.text)
+                ChatTurn.Role.Assistant ->
+                  if (t.text.isNotEmpty()) ControlPlaneChatMessage("assistant", t.text) else null
+                ChatTurn.Role.System -> ControlPlaneChatMessage("system", t.text)
+              }
             }
-          }
 
-        if (useStream && model?.streaming != false) {
-          val req =
-            ControlPlaneChatRequest(
-              model = modelId,
-              messages = history,
-              stream = true,
-            )
-          withContext(Dispatchers.IO) {
-            client.chatCompletionsStream(req)
-              .catch { e -> throw e }
-              .collect { ev ->
-                when (ev) {
-                  is ChatStreamEvent.Delta -> {
-                    withContext(Dispatchers.Main) {
-                      val cur = turns[assistantIndex]
-                      turns[assistantIndex] = cur.copy(text = cur.text + ev.text)
-                    }
-                  }
-                  is ChatStreamEvent.Done -> {
-                    val full = ev.fullText
-                    if (full != null) {
+          if (useStream && model?.streaming != false) {
+            val req =
+              ControlPlaneChatRequest(
+                model = modelId,
+                messages = history,
+                stream = true,
+              )
+            withContext(Dispatchers.IO) {
+              client.chatCompletionsStream(req)
+                .catch { e -> throw e }
+                .collect { ev ->
+                  when (ev) {
+                    is ChatStreamEvent.Delta -> {
                       withContext(Dispatchers.Main) {
                         val cur = turns[assistantIndex]
-                        if (cur.text.isEmpty()) {
-                          turns[assistantIndex] = cur.copy(text = full)
+                        turns[assistantIndex] = cur.copy(text = cur.text + ev.text)
+                      }
+                    }
+                    is ChatStreamEvent.Done -> {
+                      val full = ev.fullText
+                      if (full != null) {
+                        withContext(Dispatchers.Main) {
+                          val cur = turns[assistantIndex]
+                          if (cur.text.isEmpty()) {
+                            turns[assistantIndex] = cur.copy(text = full)
+                          }
                         }
                       }
                     }
+                    is ChatStreamEvent.Error -> throw PrismError.Server(ev.message)
+                    is ChatStreamEvent.Unknown -> Unit
                   }
-                  is ChatStreamEvent.Error -> throw PrismError.Server(ev.message)
-                  is ChatStreamEvent.Unknown -> Unit
                 }
-              }
-          }
-        } else {
-          val reply =
-            withContext(Dispatchers.IO) {
-              client.chat(model = modelId, messages = history)
             }
-          turns[assistantIndex] = assistant.copy(text = reply)
+          } else {
+            val reply =
+              withContext(Dispatchers.IO) {
+                client.chat(model = modelId, messages = history)
+              }
+            turns[assistantIndex] = assistant.copy(text = reply)
+          }
+          refreshAccount()
+        } catch (e: Exception) {
+          if (e is kotlinx.coroutines.CancellationException) throw e
+          handleAuthError(e)
+          errorMessage = e.toUserMessage()
+          recordChatFailure(text)
+          if (turns.getOrNull(assistantIndex)?.text.isNullOrEmpty()) {
+            turns.removeAt(assistantIndex)
+          }
+        } finally {
+          isBusy = false
         }
-        refreshAccount()
-      } catch (e: Exception) {
-        handleAuthError(e)
-        errorMessage = e.toUserMessage()
-        if (turns.getOrNull(assistantIndex)?.text.isNullOrEmpty()) {
-          turns.removeAt(assistantIndex)
-        }
-      } finally {
-        isBusy = false
       }
-    }
   }
 
   fun generateImage() {
@@ -360,6 +439,7 @@ class AppViewModel(
         mediaBusy = true
         mediaError = null
         mediaStatus = "Generating image…"
+        startMediaTimer()
         try {
           val res =
             withContext(Dispatchers.IO) {
@@ -372,12 +452,23 @@ class AppViewModel(
           lastImageUrl = res.firstDisplayUrl
           lastImageBase64 = res.firstBase64
           mediaStatus = "Image ready"
+          pushMediaHistory(
+            MediaHistoryItem(
+              kind = MediaKind.Image,
+              model = modelId,
+              prompt = prompt,
+              imageBase64 = res.firstBase64,
+              imageUrl = res.firstDisplayUrl,
+            ),
+          )
           refreshAccount()
         } catch (e: Exception) {
+          if (e is kotlinx.coroutines.CancellationException) throw e
           handleAuthError(e)
           mediaError = e.toUserMessage()
           mediaStatus = null
         } finally {
+          stopMediaTimer()
           mediaBusy = false
         }
       }
@@ -403,6 +494,7 @@ class AppViewModel(
         mediaBusy = true
         mediaError = null
         mediaStatus = "Generating video (can take 1–3 min)…"
+        startMediaTimer()
         try {
           val res =
             withContext(Dispatchers.IO) {
@@ -414,20 +506,36 @@ class AppViewModel(
             }
           lastVideoUrl = res.video
           mediaStatus = "Video ready"
+          pushMediaHistory(
+            MediaHistoryItem(
+              kind = MediaKind.Video,
+              model = modelId,
+              prompt = prompt.ifEmpty { "(image-only)" },
+              videoUrl = res.video,
+            ),
+          )
           refreshAccount()
         } catch (e: Exception) {
+          if (e is kotlinx.coroutines.CancellationException) throw e
           handleAuthError(e)
           mediaError = e.toUserMessage()
           mediaStatus = null
         } finally {
+          stopMediaTimer()
           mediaBusy = false
         }
       }
   }
 
+  fun retryLastVideo() {
+    if (videoPrompt.trim().isEmpty() && videoImageRef.trim().isEmpty()) return
+    generateVideo()
+  }
+
   fun cancelMedia() {
     mediaJob?.cancel()
     mediaJob = null
+    stopMediaTimer()
     mediaBusy = false
     mediaStatus = "Cancelled"
   }
@@ -438,6 +546,59 @@ class AppViewModel(
         ?: lastImageBase64?.let { "data:image/png;base64,$it" }
         ?: return
     if (forVideo) videoImageRef = ref else imageImageRef = ref
+  }
+
+  fun restoreMediaHistoryItem(item: MediaHistoryItem) {
+    when (item.kind) {
+      MediaKind.Image -> {
+        lastImageBase64 = item.imageBase64
+        lastImageUrl = item.imageUrl
+        imagePrompt = item.prompt
+        if (imageModels.any { it.id == item.model }) selectedImageModelId = item.model
+      }
+      MediaKind.Video -> {
+        lastVideoUrl = item.videoUrl
+        videoPrompt = item.prompt
+        if (videoModels.any { it.id == item.model }) selectedVideoModelId = item.model
+      }
+    }
+  }
+
+  fun historyFor(kind: MediaKind): List<MediaHistoryItem> =
+    mediaHistory.filter { it.kind == kind }
+
+  private fun pushMediaHistory(item: MediaHistoryItem) {
+    mediaHistory.add(0, item)
+    while (mediaHistory.size > MEDIA_HISTORY_CAP) {
+      mediaHistory.removeAt(mediaHistory.lastIndex)
+    }
+  }
+
+  private fun startMediaTimer() {
+    mediaTimerJob?.cancel()
+    mediaElapsedSeconds = 0
+    mediaTimerJob =
+      viewModelScope.launch {
+        while (true) {
+          kotlinx.coroutines.delay(1_000)
+          mediaElapsedSeconds += 1
+        }
+      }
+  }
+
+  private fun stopMediaTimer() {
+    mediaTimerJob?.cancel()
+    mediaTimerJob = null
+  }
+
+  private fun recordChatFailure(userText: String) {
+    lastFailedChatText = userText
+    canRetryLastChat = true
+  }
+
+  private fun clearChatFailure() {
+    lastFailedChatText = null
+    canRetryLastChat = false
   }
 
   private fun clearMediaResults() {
@@ -461,6 +622,8 @@ class AppViewModel(
   private fun Exception.toUserMessage(): String = prismUserFacingError(this)
 
   companion object {
+    private const val MEDIA_HISTORY_CAP = 20
+
     fun normalizeSecret(raw: String): String =
       raw
         .trim()

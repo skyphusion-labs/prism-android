@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
@@ -32,6 +33,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -91,6 +93,15 @@ fun ChatScreen(
     ) {
       ModelPicker(vm = vm, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
 
+      vm.chatSpendPreview?.let { preview ->
+        Text(
+          preview,
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+        )
+      }
+
       Row(
         modifier = Modifier.padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -115,12 +126,18 @@ fun ChatScreen(
       }
 
       vm.errorMessage?.let { err ->
-        Text(
-          err,
-          color = MaterialTheme.colorScheme.error,
-          style = MaterialTheme.typography.bodySmall,
-          modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-        )
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+          Text(
+            err,
+            color = MaterialTheme.colorScheme.error,
+            style = MaterialTheme.typography.bodySmall,
+          )
+          if (vm.canRetryLastChat && !vm.isBusy) {
+            TextButton(onClick = { vm.retryLastFailedChat() }) {
+              Text("Retry last message")
+            }
+          }
+        }
       }
 
       Row(
@@ -136,12 +153,19 @@ fun ChatScreen(
           modifier = Modifier.weight(1f),
           placeholder = { Text("Message") },
           maxLines = 5,
+          enabled = !vm.isBusy,
         )
-        IconButton(
-          onClick = { vm.send() },
-          enabled = !vm.isBusy && vm.draft.isNotBlank() && vm.selectedModelId != null,
-        ) {
-          Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+        if (vm.isBusy) {
+          IconButton(onClick = { vm.cancelChat() }) {
+            Icon(Icons.Default.Close, contentDescription = "Cancel generation")
+          }
+        } else {
+          IconButton(
+            onClick = { vm.send() },
+            enabled = vm.draft.isNotBlank() && vm.selectedModelId != null,
+          ) {
+            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+          }
         }
       }
     }
@@ -152,11 +176,13 @@ fun ChatScreen(
 @Composable
 private fun ModelPicker(vm: AppViewModel, modifier: Modifier = Modifier) {
   var expanded by remember { mutableStateOf(false) }
-  val selected = vm.models.firstOrNull { it.id == vm.selectedModelId }
+  val chatModels = vm.chatModels
+  val selected = chatModels.firstOrNull { it.id == vm.selectedModelId }
   val label =
     selected?.let { m ->
+      val price = m.priceSnippet()?.let { " · $it" } ?: ""
       val spend = if (m.spendable == false) " (unspendable)" else ""
-      (m.displayName ?: m.id) + spend
+      (m.displayName ?: m.id) + price + spend
     } ?: "Select model"
 
   ExposedDropdownMenuBox(
@@ -176,12 +202,14 @@ private fun ModelPicker(vm: AppViewModel, modifier: Modifier = Modifier) {
           .fillMaxWidth(),
     )
     ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-      vm.models.forEach { m ->
+      chatModels.forEach { m ->
         val spendable = m.spendable != false
         DropdownMenuItem(
           text = {
             Text(
-              (m.displayName ?: m.id) + if (!spendable) " · unspendable" else "",
+              (m.displayName ?: m.id) +
+                (m.priceSnippet()?.let { " · $it" } ?: "") +
+                if (!spendable) " · unspendable" else "",
               color =
                 if (spendable) {
                   MaterialTheme.colorScheme.onSurface
@@ -192,7 +220,8 @@ private fun ModelPicker(vm: AppViewModel, modifier: Modifier = Modifier) {
           },
           onClick = {
             if (spendable) {
-              vm.selectedModelId = m.id
+              // Keep transcript when switching models (iOS parity).
+              vm.selectChatModel(m.id)
               expanded = false
             }
           },
