@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -46,6 +47,7 @@ import org.skyphusion.prism.app.Haptics
 fun MusicScreen(
   vm: AppViewModel,
   onOpenSettings: () -> Unit,
+  onBack: (() -> Unit)? = null,
 ) {
   val context = LocalContext.current
   val view = LocalView.current
@@ -67,6 +69,13 @@ fun MusicScreen(
             Text("Music")
             vm.balance?.let {
               Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+          }
+        },
+        navigationIcon = {
+          if (onBack != null) {
+            IconButton(onClick = onBack) {
+              Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
             }
           }
         },

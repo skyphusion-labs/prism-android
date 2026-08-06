@@ -95,6 +95,9 @@ class AppViewModel(
   var selectedSttModelId by mutableStateOf(secrets.get(SecretStoreKeys.SELECTED_STT_MODEL))
   var selectedMusicModelId by mutableStateOf(secrets.get(SecretStoreKeys.SELECTED_MUSIC_MODEL))
   var balance by mutableStateOf<String?>(null)
+  /** Dual-pool usage lines for More hub / Settings (iOS planeUsageLines). */
+  var planeUsageLines = mutableStateListOf<String>()
+    private set
   var turns = mutableStateListOf<ChatTurn>()
     private set
 
@@ -621,6 +624,7 @@ class AppViewModel(
     selectedImageModelId = null
     selectedVideoModelId = null
     balance = null
+    planeUsageLines.clear()
     turns.clear()
     compactState = null
     playgroundConversationId = null
@@ -831,6 +835,8 @@ class AppViewModel(
             client.me()
           }
         balance = me.usage?.balanceDescription()
+        planeUsageLines.clear()
+        me.usage?.dualPoolLines()?.let { planeUsageLines.addAll(it) }
         me.client?.label?.let { if (deviceLabel.isBlank()) deviceLabel = it }
       } catch (e: Exception) {
         handleAuthError(e)

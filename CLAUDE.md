@@ -8,8 +8,8 @@ Guidance for agents working in this repository.
 [prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane). History / RAG /
 artifacts remain on [prism](https://github.com/skyphusion-labs/prism) (not yet wired in the app).
 
-**v0.4.1:** photo picker + save-to-gallery + Speak on chat (iOS media polish).
-Prior 0.4.0: multi-session + Audio/Music. Grok video **0.4.14+**; Play redeem **0.4.16+**.
+**v0.4.2:** More hub (Chat/Image/Video/More) + mic STT record. Prior 0.4.1: photo
+picker / save / Speak. Grok video **0.4.14+**; Play redeem **0.4.16+**.
 
 ## Related
 
