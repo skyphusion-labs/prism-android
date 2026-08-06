@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "org.skyphusion.prism"
-version = "0.3.3"
+version = "0.3.4"
 
 dependencies {
   implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")

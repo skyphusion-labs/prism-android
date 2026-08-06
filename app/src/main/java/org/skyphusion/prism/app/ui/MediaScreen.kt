@@ -96,6 +96,10 @@ fun MediaScreen(
           .padding(16.dp),
       verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+      if (!vm.isNetworkSatisfied) {
+        OfflineBanner()
+      }
+
       ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
         OutlinedTextField(
           value =
@@ -161,6 +165,11 @@ fun MediaScreen(
             Text("Use last result as reference")
           }
         }
+        if (vm.imageImageRef.isNotBlank()) {
+          TextButton(onClick = { vm.clearImageReference() }) {
+            Text("Clear reference")
+          }
+        }
       }
 
       if (kind == MediaKind.Video) {
@@ -174,6 +183,11 @@ fun MediaScreen(
         if (vm.lastImageUrl != null || vm.lastImageBase64 != null) {
           TextButton(onClick = { vm.useLastImageAsReference(forVideo = true) }) {
             Text("Use last image as first frame")
+          }
+        }
+        if (vm.videoImageRef.isNotBlank()) {
+          TextButton(onClick = { vm.clearVideoReference() }) {
+            Text("Clear reference")
           }
         }
       }

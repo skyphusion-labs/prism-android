@@ -14,6 +14,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -31,10 +32,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import org.skyphusion.prism.ControlPlaneClient
@@ -42,6 +46,7 @@ import org.skyphusion.prism.PrismKit
 import org.skyphusion.prism.StoreProducts
 import org.skyphusion.prism.app.AppViewModel
 import org.skyphusion.prism.app.BillingManager
+import org.skyphusion.prism.app.Haptics
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -50,8 +55,10 @@ fun SettingsScreen(
   onBack: () -> Unit,
 ) {
   val context = LocalContext.current
+  val view = LocalView.current
   val activity = context as? Activity
   val scope = rememberCoroutineScope()
+  var confirmClearKey by remember { mutableStateOf(false) }
   val billing =
     remember {
       BillingManager(
@@ -68,6 +75,35 @@ fun SettingsScreen(
   val billingStatus by billing.status.collectAsState()
   val billingError by billing.error.collectAsState()
   val billingBusy by billing.busy.collectAsState()
+
+  if (confirmClearKey) {
+    AlertDialog(
+      onDismissRequest = { confirmClearKey = false },
+      title = { Text("Clear device key?") },
+      text = {
+        Text(
+          "This device will need a new enrollment token (or paste of a pcp_ key) " +
+            "before chatting or generating again.",
+        )
+      },
+      confirmButton = {
+        TextButton(
+          onClick = {
+            confirmClearKey = false
+            vm.clearDeviceKey()
+            onBack()
+          },
+        ) {
+          Text("Clear key", color = MaterialTheme.colorScheme.error)
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = { confirmClearKey = false }) {
+          Text("Cancel")
+        }
+      },
+    )
+  }
 
   Scaffold(
     topBar = {
@@ -89,6 +125,10 @@ fun SettingsScreen(
           .verticalScroll(rememberScrollState())
           .padding(24.dp),
     ) {
+      if (!vm.isNetworkSatisfied) {
+        OfflineBanner(Modifier.padding(bottom = 12.dp))
+      }
+
       Text("Control plane", style = MaterialTheme.typography.titleMedium)
       Text(
         ControlPlaneClient.PRODUCTION_BASE_URL,
@@ -199,12 +239,30 @@ fun SettingsScreen(
         )
       }
 
+      Spacer(Modifier.height(16.dp))
+      Text("Enrollment", style = MaterialTheme.typography.titleMedium)
+      Text(
+        "Paste a one-time enrollment token or a full pcp_ device key from the clipboard.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
+      )
+      TextButton(
+        onClick = {
+          if (vm.pasteEnrollmentFromClipboard(readClipboardText(context))) {
+            Haptics.light(view)
+          }
+        },
+      ) {
+        Text("Paste from clipboard")
+      }
+      vm.errorMessage?.let {
+        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+      }
+
       Spacer(Modifier.height(24.dp))
       Button(
-        onClick = {
-          vm.clearDeviceKey()
-          onBack()
-        },
+        onClick = { confirmClearKey = true },
         colors =
           ButtonDefaults.buttonColors(
             containerColor = MaterialTheme.colorScheme.error,

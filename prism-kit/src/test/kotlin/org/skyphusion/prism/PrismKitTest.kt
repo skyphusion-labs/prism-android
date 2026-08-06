@@ -11,6 +11,6 @@ class PrismKitTest {
 
   @Test
   fun version() {
-    assertEquals("0.3.3", PrismKit.VERSION)
+    assertEquals("0.3.4", PrismKit.VERSION)
   }
 }

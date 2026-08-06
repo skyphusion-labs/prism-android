@@ -1,6 +1,8 @@
 package org.skyphusion.prism.app.ui
 
+import android.content.Intent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -18,11 +21,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Send
-import android.content.Intent
-import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.CircularProgressIndicator
@@ -41,6 +43,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+// ExposedDropdownMenu is resolved via ExposedDropdownMenuBox scope
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -49,6 +52,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
@@ -106,6 +110,16 @@ fun ChatScreen(
           ) {
             Icon(Icons.Default.Refresh, contentDescription = "Refresh models")
           }
+          if (vm.canRegenerateLastReply) {
+            IconButton(
+              onClick = {
+                Haptics.light(view)
+                vm.regenerateLastReply()
+              },
+            ) {
+              Icon(Icons.Default.Replay, contentDescription = "Regenerate last reply")
+            }
+          }
           if (vm.turns.isNotEmpty()) {
             IconButton(
               onClick = {
@@ -146,6 +160,10 @@ fun ChatScreen(
           .fillMaxSize()
           .padding(padding),
     ) {
+      if (!vm.isNetworkSatisfied) {
+        OfflineBanner()
+      }
+
       ModelPicker(vm = vm, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
 
       vm.chatSpendPreview?.let { preview ->
@@ -194,7 +212,23 @@ fun ChatScreen(
                 turn.role == ChatTurn.Role.Assistant &&
                 turn.id == vm.turns.lastOrNull()?.id &&
                 turn.text.isEmpty()
-            TurnBubble(turn, isStreaming = streaming)
+            val canRegen =
+              vm.canRegenerateLastReply &&
+                turn.id == vm.turns.lastOrNull()?.id &&
+                turn.role == ChatTurn.Role.Assistant
+            TurnBubble(
+              turn = turn,
+              isStreaming = streaming,
+              canRegenerate = canRegen,
+              onRegenerate = {
+                Haptics.light(view)
+                vm.regenerateLastReply()
+              },
+              onUseAsDraft = {
+                Haptics.light(view)
+                vm.useTurnAsDraft(turn)
+              },
+            )
           }
         }
       }
@@ -214,6 +248,16 @@ fun ChatScreen(
               },
             ) {
               Text("Retry last message")
+            }
+          }
+          if (vm.canRegenerateLastReply) {
+            TextButton(
+              onClick = {
+                Haptics.light(view)
+                vm.regenerateLastReply()
+              },
+            ) {
+              Text("Regenerate reply")
             }
           }
         }
@@ -255,7 +299,22 @@ fun ChatScreen(
 }
 
 @Composable
+fun OfflineBanner(modifier: Modifier = Modifier) {
+  Text(
+    text = "Offline · reconnect to send or generate",
+    style = MaterialTheme.typography.labelLarge,
+    color = Color.White,
+    modifier =
+      modifier
+        .fillMaxWidth()
+        .background(Color(0xFFE65100))
+        .padding(horizontal = 12.dp, vertical = 6.dp),
+  )
+}
+
+@Composable
 private fun ChatEmptyState(vm: AppViewModel, modifier: Modifier = Modifier) {
+  val view = LocalView.current
   Column(
     modifier = modifier.fillMaxWidth().padding(horizontal = 24.dp),
     horizontalAlignment = Alignment.CenterHorizontally,
@@ -286,6 +345,35 @@ private fun ChatEmptyState(vm: AppViewModel, modifier: Modifier = Modifier) {
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.error,
       )
+    }
+
+    Column(
+      modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+      verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+      Text(
+        "Try a starter",
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+      AppViewModel.starterPrompts.forEach { prompt ->
+        Text(
+          text = prompt,
+          style = MaterialTheme.typography.bodySmall,
+          modifier =
+            Modifier
+              .fillMaxWidth()
+              .background(
+                MaterialTheme.colorScheme.surfaceVariant,
+                RoundedCornerShape(10.dp),
+              )
+              .clickable {
+                Haptics.light(view)
+                vm.applyStarterPrompt(prompt)
+              }
+              .padding(10.dp),
+        )
+      }
     }
   }
 }
@@ -351,7 +439,13 @@ private fun ModelPicker(vm: AppViewModel, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun TurnBubble(turn: ChatTurn, isStreaming: Boolean = false) {
+private fun TurnBubble(
+  turn: ChatTurn,
+  isStreaming: Boolean = false,
+  canRegenerate: Boolean = false,
+  onRegenerate: (() -> Unit)? = null,
+  onUseAsDraft: (() -> Unit)? = null,
+) {
   val isUser = turn.role == ChatTurn.Role.User
   Row(
     modifier = Modifier.fillMaxWidth(),
@@ -381,7 +475,14 @@ private fun TurnBubble(turn: ChatTurn, isStreaming: Boolean = false) {
                 },
               shape = RoundedCornerShape(12.dp),
             )
-            .padding(12.dp),
+            .padding(12.dp)
+            .then(
+              if (!isStreaming && turn.text.isNotEmpty() && onUseAsDraft != null) {
+                Modifier.clickable { onUseAsDraft() }
+              } else {
+                Modifier
+              },
+            ),
       ) {
         if (isStreaming) {
           Row(
@@ -408,6 +509,11 @@ private fun TurnBubble(turn: ChatTurn, isStreaming: Boolean = false) {
                 MaterialTheme.colorScheme.onSurfaceVariant
               },
           )
+        }
+      }
+      if (canRegenerate && onRegenerate != null) {
+        TextButton(onClick = onRegenerate) {
+          Text("Regenerate")
         }
       }
     }

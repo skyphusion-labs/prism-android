@@ -1,5 +1,10 @@
 package org.skyphusion.prism.app
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -52,6 +57,7 @@ data class MediaHistoryItem(
  */
 class AppViewModel(
   private val secrets: SecretStore,
+  private val appContext: Context,
   private val baseUrl: String = ControlPlaneClient.PRODUCTION_BASE_URL,
 ) : ViewModel() {
   private var client =
@@ -91,6 +97,10 @@ class AppViewModel(
   var planeHealthService by mutableStateOf<String?>(null)
     private set
 
+  /** Device has a usable network path (Wi-Fi / cellular). iOS NWPathMonitor parity. */
+  var isNetworkSatisfied by mutableStateOf(true)
+    private set
+
   val planeHealthLabel: String
     get() =
       when (planeHealthOk) {
@@ -99,6 +109,18 @@ class AppViewModel(
           planeHealthService?.takeIf { it.isNotBlank() }?.let { "ok · $it" } ?: "ok"
         false -> "unreachable"
       }
+
+  /**
+   * True when the last turn is an assistant reply we can re-run under the current model.
+   * Client owns the transcript on the control plane.
+   */
+  val canRegenerateLastReply: Boolean
+    get() {
+      if (isBusy || !hasDeviceKey) return false
+      val last = turns.lastOrNull() ?: return false
+      if (last.role != ChatTurn.Role.Assistant) return false
+      return turns.getOrNull(turns.lastIndex - 1)?.role == ChatTurn.Role.User
+    }
 
   // Image / video
   var imagePrompt by mutableStateOf("")
@@ -122,6 +144,7 @@ class AppViewModel(
   private var mediaJob: Job? = null
   private var mediaTimerJob: Job? = null
   private var chatJob: Job? = null
+  private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
   val imageModels: List<ControlPlaneModel>
     get() =
@@ -181,6 +204,7 @@ class AppViewModel(
   val chatSpendPreview: String? get() = spendPreview(selectedChatModel)
 
   init {
+    startNetworkMonitor()
     probePlaneHealth()
     if (hasDeviceKey) {
       refreshAccount()
@@ -188,10 +212,74 @@ class AppViewModel(
     }
   }
 
+  override fun onCleared() {
+    stopNetworkMonitor()
+    super.onCleared()
+  }
+
   /** Foreground resume: health + balance when enrolled (iOS onBecomeActive). */
   fun onBecomeActive() {
     probePlaneHealth()
     if (hasDeviceKey) refreshAccount()
+  }
+
+  private fun startNetworkMonitor() {
+    val cm =
+      appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        ?: return
+    isNetworkSatisfied = cm.hasUsableInternet()
+    val callback =
+      object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+          isNetworkSatisfied = true
+        }
+
+        override fun onLost(network: Network) {
+          isNetworkSatisfied = cm.hasUsableInternet()
+        }
+
+        override fun onCapabilitiesChanged(
+          network: Network,
+          networkCapabilities: NetworkCapabilities,
+        ) {
+          // Prefer INTERNET alone; VALIDATED can lag on first connect.
+          isNetworkSatisfied =
+            networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        }
+
+        override fun onUnavailable() {
+          isNetworkSatisfied = false
+        }
+      }
+    val request =
+      NetworkRequest.Builder()
+        .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        .build()
+    try {
+      cm.registerNetworkCallback(request, callback)
+      networkCallback = callback
+    } catch (_: Exception) {
+      // Missing ACCESS_NETWORK_STATE or OEM quirks -- leave default true.
+    }
+  }
+
+  private fun stopNetworkMonitor() {
+    val cb = networkCallback ?: return
+    val cm =
+      appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        ?: return
+    try {
+      cm.unregisterNetworkCallback(cb)
+    } catch (_: Exception) {
+      // already unregistered
+    }
+    networkCallback = null
+  }
+
+  private fun ConnectivityManager.hasUsableInternet(): Boolean {
+    val network = activeNetwork ?: return false
+    val caps = getNetworkCapabilities(network) ?: return false
+    return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
   }
 
   /** Unauthenticated `GET /health` on the control plane origin. */
@@ -261,6 +349,44 @@ class AppViewModel(
   fun retryLastImage() {
     if (imagePrompt.trim().isEmpty()) return
     generateImage()
+  }
+
+  fun clearImageReference() {
+    imageImageRef = ""
+  }
+
+  fun clearVideoReference() {
+    videoImageRef = ""
+  }
+
+  /** Fill draft from an empty-state starter chip. */
+  fun applyStarterPrompt(text: String) {
+    draft = text
+  }
+
+  /** Use a turn's text as the compose draft (context menu). */
+  fun useTurnAsDraft(turn: ChatTurn) {
+    draft = turn.text
+  }
+
+  /**
+   * Clipboard → enrollment token field (token or full pcp_ key routed appropriately).
+   * Returns true when something was applied.
+   */
+  fun pasteEnrollmentFromClipboard(raw: String?): Boolean {
+    val trimmed = raw?.trim().orEmpty()
+    if (trimmed.isEmpty()) {
+      errorMessage = "Clipboard is empty."
+      return false
+    }
+    val key = normalizeSecret(trimmed)
+    if (key.startsWith("pcp_")) {
+      importDeviceKey(key)
+      return true
+    }
+    enrollmentToken = trimmed
+    errorMessage = null
+    return true
   }
 
   fun enroll() {
@@ -423,23 +549,66 @@ class AppViewModel(
   }
 
   fun send() {
-    val text = draft.trim()
+    if (isBusy) return
+    performSend(SendMode.NewFromDraft)
+  }
+
+  /** Drop the last assistant reply and re-run the last user turn under the current model. */
+  fun regenerateLastReply() {
+    if (!canRegenerateLastReply) return
+    performSend(SendMode.RegenerateLast)
+  }
+
+  private enum class SendMode {
+    NewFromDraft,
+    RegenerateLast,
+  }
+
+  private fun performSend(mode: SendMode) {
     val modelId = selectedModelId ?: selectedChatModel?.id
-    if (text.isEmpty() || modelId == null || isBusy) return
+    if (modelId == null || isBusy) return
+    if (!hasDeviceKey) {
+      errorMessage = "Enroll a device key before chatting."
+      return
+    }
+    if (!isNetworkSatisfied) {
+      errorMessage = "No network connection. Reconnect and try again."
+      return
+    }
     val model = models.firstOrNull { it.id == modelId }
     if (model?.spendable == false) {
       errorMessage = "Model is not spendable on this plan"
       return
     }
 
-    draft = ""
-    clearChatFailure()
-    turns.add(ChatTurn(role = ChatTurn.Role.User, text = text))
+    val text: String =
+      when (mode) {
+        SendMode.NewFromDraft -> {
+          val t = draft.trim()
+          if (t.isEmpty()) return
+          draft = ""
+          clearChatFailure()
+          turns.add(ChatTurn(role = ChatTurn.Role.User, text = t))
+          t
+        }
+        SendMode.RegenerateLast -> {
+          while (turns.lastOrNull()?.role == ChatTurn.Role.Assistant) {
+            turns.removeAt(turns.lastIndex)
+          }
+          val user = turns.lastOrNull()
+          if (user == null || user.role != ChatTurn.Role.User) {
+            errorMessage = "Nothing to regenerate."
+            return
+          }
+          clearChatFailure()
+          user.text
+        }
+      }
+
     val assistant = ChatTurn(role = ChatTurn.Role.Assistant, text = "", modelId = modelId)
     turns.add(assistant)
     val assistantIndex = turns.lastIndex
 
-    chatJob?.cancel()
     chatJob =
       viewModelScope.launch {
         isBusy = true
@@ -515,6 +684,10 @@ class AppViewModel(
     val modelId = selectedImageModelId ?: return
     val prompt = imagePrompt.trim()
     if (prompt.isEmpty() || mediaBusy) return
+    if (!isNetworkSatisfied) {
+      mediaError = "No network connection. Reconnect and try again."
+      return
+    }
     val model = imageModels.firstOrNull { it.id == modelId }
     if (model?.spendable == false) {
       mediaError = "Model is not spendable on this plan"
@@ -570,6 +743,10 @@ class AppViewModel(
     val prompt = videoPrompt.trim()
     val image = videoImageRef.trim().ifEmpty { null }
     if ((prompt.isEmpty() && image == null) || mediaBusy) return
+    if (!isNetworkSatisfied) {
+      mediaError = "No network connection. Reconnect and try again."
+      return
+    }
     val model = videoModels.firstOrNull { it.id == modelId }
     if (model?.spendable == false) {
       mediaError = "Model is not spendable on this plan"
@@ -715,6 +892,15 @@ class AppViewModel(
   companion object {
     private const val MEDIA_HISTORY_CAP = 20
 
+    /** Empty-state chips; tapping fills the draft (user can edit before send). */
+    val starterPrompts: List<String> =
+      listOf(
+        "Explain this simply, like I am new to the topic:",
+        "Summarize the following in three short bullets:",
+        "Write a clear product blurb (2 sentences) for:",
+        "List practical next steps to debug:",
+      )
+
     fun normalizeSecret(raw: String): String =
       raw
         .trim()
@@ -725,12 +911,13 @@ class AppViewModel(
 
   class Factory(
     private val secrets: SecretStore,
+    private val appContext: Context,
     private val baseUrl: String = ControlPlaneClient.PRODUCTION_BASE_URL,
   ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
       if (modelClass.isAssignableFrom(AppViewModel::class.java)) {
-        return AppViewModel(secrets, baseUrl) as T
+        return AppViewModel(secrets, appContext.applicationContext, baseUrl) as T
       }
       throw IllegalArgumentException("Unknown ViewModel ${modelClass.name}")
     }
