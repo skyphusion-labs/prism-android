@@ -87,6 +87,15 @@ Debug builds do not exercise Play Billing against production products; use Inter
 | iOS main | 0.8.3 (+ 0.8.4 branch) | TestFlight live |
 | Android main | **0.8.0** | This guide; matches 0.8.4 product deltas |
 
+## Legal (required in-app + store listing)
+
+Play Console **Store listing → Privacy policy** URL:
+
+`https://skyphusion.org/privacy.html`
+
+In-app (Settings → Legal & open source): privacy, bundled AGPL LICENSE, source
+repos (`prism-android`, control plane, playground Worker). Same set as iOS.
+
 ## Support
 
 Plane health: `curl -sS https://play-proxy.skyphusion.org/health`  

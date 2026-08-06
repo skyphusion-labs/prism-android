@@ -1,6 +1,8 @@
 # prism-android
 
-**License:** AGPL-3.0-only  
+**License:** [AGPL-3.0-only](LICENSE)  
+**Privacy:** https://skyphusion.org/privacy.html  
+**Source:** this repo (`https://github.com/skyphusion-labs/prism-android`)  
 **API (metered inference):** [prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane)  
 **Playground (history/RAG/etc.):** [prism](https://github.com/skyphusion-labs/prism)  
 **Sibling:** [prism-ios](https://github.com/skyphusion-labs/prism-ios)
@@ -20,14 +22,9 @@ AGPL **Android client** for Prism against the commercial control plane
 
 ## Status
 
-**v0.8.0** -- iOS 0.8.4 product deltas (+ prior 0.8.3 surface):
-
-- **Biometric / screen-lock** gate after launch and background
-- **Per-request cost** line (`prism-usage-micro-usd`) on non-stream chat
-- Chat **live STT** WebSocket + file STT mic menu; commit to draft
-- Import chats: merge vs replace preview
-- Home-screen **balance widget**
-- Prior 0.7.0: Usage, rate preview, camera/clipboard, video notify, onboarding
+**v0.8.1** -- Settings **Legal & open source** (privacy, bundled AGPL LICENSE,
+source links for this app + plane + playground Worker). Prior **0.8.0**: biometric
+lock, per-request cost, chat live STT, import merge/replace, balance widget.
 
 **Beta distribution (non-Android-native friendly):** [docs/PLAY-INTERNAL.md](docs/PLAY-INTERNAL.md)
 

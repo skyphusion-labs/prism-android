@@ -51,6 +51,7 @@ import org.skyphusion.prism.app.AppViewModel
 import org.skyphusion.prism.app.BackendKind
 import org.skyphusion.prism.app.BillingManager
 import org.skyphusion.prism.app.Haptics
+import org.skyphusion.prism.app.LegalLinks
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,6 +64,12 @@ fun SettingsScreen(
   val activity = context as? Activity
   val scope = rememberCoroutineScope()
   var confirmClearKey by remember { mutableStateOf(false) }
+  var showLicense by remember { mutableStateOf(false) }
+
+  if (showLicense) {
+    LicenseScreen(onBack = { showLicense = false })
+    return
+  }
   val billing =
     remember {
       BillingManager(
@@ -446,16 +453,37 @@ fun SettingsScreen(
       Spacer(Modifier.height(24.dp))
       HorizontalDivider()
       Spacer(Modifier.height(16.dp))
+      Text("Legal & open source", style = MaterialTheme.typography.titleMedium)
+      Spacer(Modifier.height(4.dp))
+      Text(
+        "${LegalLinks.COPYRIGHT_LINE} Corresponding source is published on GitHub; " +
+          "the full license is bundled in the app.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+      Spacer(Modifier.height(8.dp))
+      AboutLink("Privacy policy", LegalLinks.PRIVACY_POLICY)
+      TextButton(onClick = { showLicense = true }) {
+        Text("License (${LegalLinks.LICENSE_SHORT_NAME})")
+      }
+      AboutLink("License on GitHub", LegalLinks.LICENSE_ONLINE)
+      AboutLink("Source code (this app)", LegalLinks.SOURCE_CODE)
+      AboutLink("Source (control plane)", LegalLinks.CONTROL_PLANE_SOURCE)
+      AboutLink("Source (playground Worker)", LegalLinks.PRISM_WORKER_SOURCE)
+      AboutLink("NOTICE", LegalLinks.NOTICE_ONLINE)
+
+      Spacer(Modifier.height(24.dp))
+      HorizontalDivider()
+      Spacer(Modifier.height(16.dp))
       Text("About", style = MaterialTheme.typography.titleMedium)
       Spacer(Modifier.height(8.dp))
-      AboutLink("skyphusion.org", "https://skyphusion.org")
-      AboutLink("Privacy", "https://skyphusion.org/privacy.html")
-      AboutLink("Playground", "https://play.skyphusion.org")
-      AboutLink("Status", "https://status.skyphusion.org")
+      AboutLink("skyphusion.org", LegalLinks.WEBSITE)
+      AboutLink("Prism playground (web)", LegalLinks.PLAYGROUND)
+      AboutLink("Status", LegalLinks.STATUS)
       TextButton(
         onClick = {
           context.startActivity(
-            Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:support@skyphusion.org")),
+            Intent(Intent.ACTION_SENDTO, Uri.parse(LegalLinks.SUPPORT_EMAIL)),
           )
         },
       ) {
@@ -463,7 +491,23 @@ fun SettingsScreen(
       }
       Spacer(Modifier.height(12.dp))
       Text(
-        "PrismKit ${PrismKit.VERSION}",
+        "Prism by SkyPhusion Labs · ${LegalLinks.LICENSE_SHORT_NAME}",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+      )
+      Text(
+        "App ${
+          runCatching {
+            val p = context.packageManager.getPackageInfo(context.packageName, 0)
+            val code =
+              if (android.os.Build.VERSION.SDK_INT >= 28) p.longVersionCode
+              else {
+                @Suppress("DEPRECATION")
+                p.versionCode.toLong()
+              }
+            "${p.versionName} ($code)"
+          }.getOrElse { "?" }
+        } · PrismKit ${PrismKit.VERSION}",
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
       )
