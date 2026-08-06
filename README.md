@@ -20,18 +20,20 @@ AGPL **Android client** for Prism against the commercial control plane
 
 ## Status
 
-**v0.5.1** -- iOS polish parity:
+**v0.6.0** -- iOS 0.8.2 product parity (+ Android live STT):
 
-- Playground **incremental SSE** + `conversation_id` on stream done (compact works after stream)
-- **Model search** on chat/media/audio/music pickers
-- **Markdown** chat bubbles; in-app **video player**; share speech/music audio
-- Developer **base URL** overrides for plane + playground
-- Prior 0.5.0: dual-backend
+- **Vision** photo attach on chat (multiparty plane `image_url`; playground attachments)
+- **Seedance-first** video default; Hailuo i2v footer
+- Empty-stream **non-stream fallback** (iOS #33)
+- Playground **cloud chat sync**; local session JSON export/import
+- Media history clear; complete starter prompts; first-run **onboarding**
+- **Live STT** WebSocket (plane, linear16 @ 16 kHz; beyond iOS app UI)
+- Prior 0.5.x: dual-backend, More hub, compact, sessions, media doors
 
 Create the three in-app products in Play Console (same product ids as App Store). Production
 redeem needs Worker secret `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` on the plane.
 
-Grok video works when the plane is **0.4.14+**. Prefer Veo / Seedance Fast if you hit 7003.
+Grok video works when the plane is **0.4.14+**. Prefer Seedance Fast / Veo if you hit 7003.
 
 ## Commands
 

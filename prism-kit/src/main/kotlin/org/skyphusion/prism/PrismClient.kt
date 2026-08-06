@@ -259,6 +259,34 @@ class PrismClient(
     return joined to final
   }
 
+  // --- Conversation list / detail (playground sync) ---
+
+  /** List playground conversations for the signed-in user. */
+  fun listConversations(): List<ConversationListItem> {
+    val (body, _) =
+      http.send<Unit?, ConversationListResponse>(
+        "GET",
+        "/api/conversations",
+        body = null,
+        headers = defaultHeaders,
+      )
+    return body.conversations.orEmpty()
+  }
+
+  /** Fetch conversation metadata + turns + optional compact. */
+  fun getConversation(id: String): ConversationDetailResponse {
+    val encoded = encodePathSegment(id)
+    val (body, _) =
+      http.send<Unit?, ConversationDetailResponse>(
+        "GET",
+        "/api/conversations/$encoded",
+        body = null,
+        headers = defaultHeaders,
+      )
+    body.error?.takeIf { it.isNotBlank() }?.let { throw PrismError.Server(it) }
+    return body
+  }
+
   // --- Conversation compact (playground v0.175.7) ---
 
   fun compactConversation(

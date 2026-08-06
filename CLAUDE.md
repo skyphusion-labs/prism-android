@@ -8,9 +8,9 @@ Guidance for agents working in this repository.
 [prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane). History / RAG /
 artifacts remain on [prism](https://github.com/skyphusion-labs/prism) (not yet wired in the app).
 
-**v0.5.1:** iOS polish: incremental playground SSE + conversation_id, model search,
-markdown chat, in-app video, share audio, developer base URLs. Prior 0.5.0 dual-backend.
-Grok video **0.4.14+**; Play redeem **0.4.16+**.
+**v0.6.0:** iOS 0.8.2 parity -- vision attach, Seedance default, playground sync,
+session export, stream fallback, onboarding, live STT (Android-only plane door).
+Grok video **0.4.14+**; Play redeem **0.4.16+**; plane vision multiparty **0.4.23+**.
 
 ## Related
 

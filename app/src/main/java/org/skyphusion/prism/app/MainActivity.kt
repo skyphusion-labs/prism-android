@@ -18,8 +18,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
-import org.skyphusion.prism.app.ui.EnrollScreen
 import org.skyphusion.prism.app.ui.LoginScreen
+import org.skyphusion.prism.app.ui.OnboardingScreen
 import org.skyphusion.prism.app.ui.PlaneShell
 import org.skyphusion.prism.app.ui.PrismTheme
 import org.skyphusion.prism.app.ui.SessionListScreen
@@ -77,7 +77,11 @@ class MainActivity : ComponentActivity() {
                 vm = vm,
                 onOpenSettings = { showSettings = true },
               )
-            vm.needsPlaneEnroll -> EnrollScreen(vm)
+            vm.needsPlaneEnroll ->
+              OnboardingScreen(
+                vm = vm,
+                onOpenSettings = { showSettings = true },
+              )
             else ->
               PlaneShell(
                 vm = vm,

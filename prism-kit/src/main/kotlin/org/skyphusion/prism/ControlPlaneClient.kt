@@ -311,6 +311,46 @@ class ControlPlaneClient(
   fun transcribe(model: String, audio: String): TranscriptionResponse =
     transcribe(TranscriptionRequest(model = model, audio = audio))
 
+  /**
+   * Mint a short-lived STT ticket for browser-style WebSocket auth.
+   * Native Android prefers [openSttStream] with Bearer on the upgrade instead.
+   */
+  fun createSttSession(): SttSessionResponse {
+    val key = requireKey()
+    val (body, _) =
+      http.send<Unit?, SttSessionResponse>(
+        "POST",
+        "/v1/stt/sessions",
+        body = null,
+        bearer = key,
+      )
+    body.error?.let { err ->
+      throw PrismError.Server(err.message ?: err.code ?: "stt session failed")
+    }
+    if (body.ticket.isNullOrBlank()) throw PrismError.Server("Empty STT ticket")
+    return body
+  }
+
+  /**
+   * Open live mic STT WebSocket (`GET /v1/stt/stream`) with `Authorization: Bearer pcp_…`.
+   * Client sends linear16 PCM @ 16 kHz binary frames; receives Deepgram Flux JSON.
+   */
+  fun openSttStream(listener: okhttp3.WebSocketListener): okhttp3.WebSocket {
+    val key = requireKey()
+    val req =
+      http.request(
+        method = "GET",
+        path = "/v1/stt/stream",
+        bodyJson = null,
+        bearer = key,
+        headers = mapOf("Upgrade" to "websocket", "Connection" to "Upgrade"),
+      )
+    return http.client.newWebSocket(req, listener)
+  }
+
+  /** Absolute stream URL (for diagnostics). */
+  fun sttStreamUrl(): String = http.url("/v1/stt/stream")
+
   /** `POST /v1/music/generations` -- metered music; [audio] URL or base64. */
   fun generateMusic(request: MusicGenerationRequest): MusicGenerationResponse {
     val key = requireKey()
