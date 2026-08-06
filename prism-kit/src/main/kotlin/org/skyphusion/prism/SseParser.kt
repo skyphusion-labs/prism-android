@@ -62,7 +62,8 @@ object SseParser {
         val out =
           obj["output"]?.jsonPrimitive?.contentOrNull
             ?: obj["text"]?.jsonPrimitive?.contentOrNull
-        return ChatStreamEvent.Done(fullText = out)
+        val cid = obj["conversation_id"]?.jsonPrimitive?.contentOrNull
+        return ChatStreamEvent.Done(fullText = out, conversationId = cid)
       }
       "error" -> {
         val msg =

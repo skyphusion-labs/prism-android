@@ -2,6 +2,7 @@ package org.skyphusion.prism.app
 
 import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaPlayer
@@ -9,6 +10,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Base64
+import androidx.core.content.FileProvider
 import java.io.File
 import java.io.FileOutputStream
 
@@ -94,12 +96,64 @@ object MediaUtils {
     format: String = "mp3",
   ): MediaPlayer? {
     val bytes = decodeBase64Payload(base64) ?: return null
-    val f = File(context.cacheDir, "prism-play.$format")
-    FileOutputStream(f).use { it.write(bytes) }
+    val f = writeCacheFile(context, "prism-play.$format", bytes) ?: return null
     return MediaPlayer().apply {
       setDataSource(f.absolutePath)
       prepare()
       start()
     }
+  }
+
+  fun writeCacheFile(context: Context, name: String, bytes: ByteArray): File? {
+    return try {
+      val f = File(context.cacheDir, name)
+      FileOutputStream(f).use { it.write(bytes) }
+      f
+    } catch (_: Exception) {
+      null
+    }
+  }
+
+  /** Share cache audio/image via [FileProvider]. */
+  fun shareFile(
+    context: Context,
+    file: File,
+    mime: String,
+    chooserTitle: String = "Share",
+  ): Boolean {
+    return try {
+      val uri =
+        FileProvider.getUriForFile(
+          context,
+          "${context.packageName}.fileprovider",
+          file,
+        )
+      val send =
+        Intent(Intent.ACTION_SEND).apply {
+          type = mime
+          putExtra(Intent.EXTRA_STREAM, uri)
+          addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+      context.startActivity(Intent.createChooser(send, chooserTitle))
+      true
+    } catch (_: Exception) {
+      false
+    }
+  }
+
+  fun shareAudioBase64(
+    context: Context,
+    base64: String,
+    format: String = "mp3",
+  ): Boolean {
+    val bytes = decodeBase64Payload(base64) ?: return false
+    val f = writeCacheFile(context, "prism-share.$format", bytes) ?: return false
+    val mime =
+      when (format.lowercase()) {
+        "wav" -> "audio/wav"
+        "m4a", "mp4" -> "audio/mp4"
+        else -> "audio/mpeg"
+      }
+    return shareFile(context, f, mime, "Share audio")
   }
 }

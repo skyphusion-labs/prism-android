@@ -4,13 +4,20 @@
   android:height="108dp"
   android:viewportWidth="108"
   android:viewportHeight="108">
+  <!-- Safe-zone circle (adaptive icon) -->
   <path
-    android:fillColor="#1A1A2E"
-    android:pathData="M0,0h108v108h-108z" />
+    android:fillColor="#0F0F1A"
+    android:pathData="M54,18c19.9,0 36,16.1 36,36s-16.1,36 -36,36 -36,-16.1 -36,-36 16.1,-36 36,-36z" />
+  <!-- Prism mark -->
   <path
     android:fillColor="#E94560"
-    android:pathData="M30,70 L54,28 L78,70 Z" />
+    android:pathData="M54,30 L78,74 L30,74 Z" />
   <path
     android:fillColor="#FFFFFF"
-    android:pathData="M48,62 L54,48 L60,62 Z" />
+    android:fillAlpha="0.92"
+    android:pathData="M54,42 L66,66 L42,66 Z" />
+  <!-- Accent facet -->
+  <path
+    android:fillColor="#F5A3B3"
+    android:pathData="M54,30 L66,66 L54,58 Z" />
 </vector>

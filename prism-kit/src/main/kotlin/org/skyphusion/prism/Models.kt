@@ -290,7 +290,12 @@ data class ChatCompletionResult(
 /** Stream events from OpenAI-compatible SSE (control plane) or playground-shaped frames. */
 sealed class ChatStreamEvent {
   data class Delta(val text: String) : ChatStreamEvent()
-  data class Done(val fullText: String?, val usage: ChatUsage? = null) : ChatStreamEvent()
+  data class Done(
+    val fullText: String?,
+    val usage: ChatUsage? = null,
+    /** Playground multi-turn id when present on the done frame. */
+    val conversationId: String? = null,
+  ) : ChatStreamEvent()
   data class Error(val message: String) : ChatStreamEvent()
   data class Unknown(val raw: String) : ChatStreamEvent()
 }

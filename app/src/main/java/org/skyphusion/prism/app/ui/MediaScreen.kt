@@ -4,6 +4,8 @@ import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Base64
+import android.widget.MediaController
+import android.widget.VideoView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -48,6 +50,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import coil.compose.AsyncImage
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -135,6 +138,14 @@ fun MediaScreen(
         )
         return@Column
       }
+
+      OutlinedTextField(
+        value = vm.modelSearch,
+        onValueChange = { vm.modelSearch = it },
+        label = { Text("Search models") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+      )
 
       ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
         OutlinedTextField(
@@ -410,14 +421,48 @@ fun MediaScreen(
       if (kind == MediaKind.Video) {
         vm.lastVideoUrl?.let { url ->
           Text("Video ready", style = MaterialTheme.typography.titleSmall)
-          Text(url, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-          Button(
-            onClick = {
-              context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-            },
-            modifier = Modifier.fillMaxWidth(),
-          ) {
-            Text("Open video")
+          if (url.startsWith("http://") || url.startsWith("https://")) {
+            AndroidView(
+              factory = { ctx ->
+                VideoView(ctx).apply {
+                  setVideoURI(Uri.parse(url))
+                  val mc = MediaController(ctx)
+                  mc.setAnchorView(this)
+                  setMediaController(mc)
+                  setOnPreparedListener { it.isLooping = false }
+                }
+              },
+              modifier =
+                Modifier
+                  .fillMaxWidth()
+                  .heightIn(min = 200.dp, max = 360.dp),
+              update = { vv ->
+                // keep URI; user presses play via MediaController
+              },
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              TextButton(
+                onClick = {
+                  context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                },
+              ) {
+                Text("Open externally")
+              }
+              TextButton(
+                onClick = {
+                  val send =
+                    Intent(Intent.ACTION_SEND).apply {
+                      type = "text/plain"
+                      putExtra(Intent.EXTRA_TEXT, url)
+                    }
+                  context.startActivity(Intent.createChooser(send, "Share video URL"))
+                },
+              ) {
+                Text("Share URL")
+              }
+            }
+          } else {
+            Text(url, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
           }
         }
       }

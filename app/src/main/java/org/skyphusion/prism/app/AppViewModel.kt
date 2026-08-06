@@ -93,13 +93,13 @@ class AppViewModel(
   private val appContext: Context,
   private val baseUrl: String = ControlPlaneClient.PRODUCTION_BASE_URL,
 ) : ViewModel() {
-  private var client =
+  private var client: ControlPlaneClient =
     ControlPlaneClient(
       baseUrl = secrets.get(SecretStoreKeys.CONTROL_PLANE_BASE_URL) ?: baseUrl,
       clientKey = secrets.get(SecretStoreKeys.CONTROL_PLANE_DEVICE_KEY),
     )
 
-  /** Playground Worker client (compact API when [playgroundConversationId] is set). */
+  /** Playground Worker client (auth, chat, compact). */
   private var playground: PrismClient =
     PrismClient.create(
       baseUrl =
@@ -161,8 +161,18 @@ class AppViewModel(
   var hideUnspendable by mutableStateOf(
     secrets.get(SecretStoreKeys.HIDE_UNSPENDABLE)?.let { it != "0" && !it.equals("false", true) } ?: true,
   )
+  /** Model picker search (chat/media/audio); selection survives filter. */
+  var modelSearch by mutableStateOf("")
   var isBusy by mutableStateOf(false)
     private set
+
+  /** Editable base URLs (developer overrides). */
+  var controlPlaneBaseUrl by mutableStateOf(
+    secrets.get(SecretStoreKeys.CONTROL_PLANE_BASE_URL) ?: baseUrl,
+  )
+  var playgroundBaseUrl by mutableStateOf(
+    secrets.get(SecretStoreKeys.PLAYGROUND_BASE_URL) ?: PrismClient.PRODUCTION_BASE_URL,
+  )
   var errorMessage by mutableStateOf<String?>(null)
   var banner by mutableStateOf("Control plane · $baseUrl")
 
@@ -278,11 +288,19 @@ class AppViewModel(
   private var chatJob: Job? = null
   private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
+  private fun matchesModelSearch(m: ControlPlaneModel): Boolean {
+    val q = modelSearch.trim().lowercase()
+    if (q.isEmpty()) return true
+    val hay = "${m.displayName.orEmpty()} ${m.id}".lowercase()
+    return hay.contains(q)
+  }
+
   val imageModels: List<ControlPlaneModel>
     get() =
       models
         .filter { it.modality == "image" }
         .filter { !hideUnspendable || it.spendable != false }
+        .filter { matchesModelSearch(it) }
         .sortedWith(
           compareBy<ControlPlaneModel> {
             when {
@@ -298,6 +316,7 @@ class AppViewModel(
       models
         .filter { it.modality == "video" }
         .filter { !hideUnspendable || it.spendable != false }
+        .filter { matchesModelSearch(it) }
         .sortedWith(
           compareBy<ControlPlaneModel> {
             // Grok video last (needs plane 0.4.14+ ZDR); prefer working defaults first.
@@ -314,12 +333,21 @@ class AppViewModel(
       models
         .filter { it.modality == "chat" || it.modality == null }
         .filter { !hideUnspendable || it.spendable != false }
+        .filter { matchesModelSearch(it) }
+
+  /** All chat models ignoring search (selection must survive filter). */
+  val allChatModels: List<ControlPlaneModel>
+    get() =
+      models
+        .filter { it.modality == "chat" || it.modality == null }
+        .filter { !hideUnspendable || it.spendable != false }
 
   val speechModels: List<ControlPlaneModel>
     get() =
       models
         .filter { it.modality == "tts" }
         .filter { !hideUnspendable || it.spendable != false }
+        .filter { matchesModelSearch(it) }
         .sortedBy { it.displayName ?: it.id }
 
   val sttModels: List<ControlPlaneModel>
@@ -327,6 +355,7 @@ class AppViewModel(
       models
         .filter { it.modality == "stt" }
         .filter { !hideUnspendable || it.spendable != false }
+        .filter { matchesModelSearch(it) }
         .sortedBy { it.displayName ?: it.id }
 
   val musicModels: List<ControlPlaneModel>
@@ -334,10 +363,14 @@ class AppViewModel(
       models
         .filter { it.modality == "music" }
         .filter { !hideUnspendable || it.spendable != false }
+        .filter { matchesModelSearch(it) }
         .sortedBy { it.displayName ?: it.id }
 
   val selectedChatModel: ControlPlaneModel?
-    get() = chatModels.firstOrNull { it.id == selectedModelId } ?: chatModels.firstOrNull()
+    get() =
+      allChatModels.firstOrNull { it.id == selectedModelId }
+        ?: chatModels.firstOrNull()
+        ?: allChatModels.firstOrNull()
 
   val selectedImageModel: ControlPlaneModel?
     get() = imageModels.firstOrNull { it.id == selectedImageModelId } ?: imageModels.firstOrNull()
@@ -440,11 +473,12 @@ class AppViewModel(
     secrets.set(SecretStoreKeys.BACKEND_MODE, kind.toStorage())
     models.clear()
     selectedModelId = null
+    modelSearch = ""
     errorMessage = null
     banner =
       when (kind) {
-        BackendKind.ControlPlane -> "Control plane · $baseUrl"
-        BackendKind.Playground -> "Playground · ${playground.http.root}"
+        BackendKind.ControlPlane -> "Control plane · $controlPlaneBaseUrl"
+        BackendKind.Playground -> "Playground · $playgroundBaseUrl"
       }
     when (kind) {
       BackendKind.ControlPlane -> {
@@ -455,6 +489,50 @@ class AppViewModel(
       }
       BackendKind.Playground -> refreshModels()
     }
+  }
+
+  /** Apply control-plane base URL (developer). Rebuilds client. */
+  fun applyControlPlaneBaseUrl(raw: String) {
+    val url = raw.trim().trimEnd('/')
+    if (url.isEmpty()) return
+    controlPlaneBaseUrl = url
+    secrets.set(SecretStoreKeys.CONTROL_PLANE_BASE_URL, url)
+    val key = secrets.get(SecretStoreKeys.CONTROL_PLANE_DEVICE_KEY)
+    client = ControlPlaneClient(baseUrl = url, clientKey = key)
+    hasDeviceKey = !key.isNullOrBlank()
+    if (backend == BackendKind.ControlPlane) {
+      banner = "Control plane · $url"
+      if (hasDeviceKey) {
+        refreshAccount()
+        refreshModels()
+      }
+    }
+  }
+
+  /** Apply playground base URL (developer). Rebuilds client; restores session cookie. */
+  fun applyPlaygroundBaseUrl(raw: String) {
+    val url = raw.trim().trimEnd('/')
+    if (url.isEmpty()) return
+    playgroundBaseUrl = url
+    secrets.set(SecretStoreKeys.PLAYGROUND_BASE_URL, url)
+    playground =
+      PrismClient.create(baseUrl = url).also { pc ->
+        secrets.get(SecretStoreKeys.PLAYGROUND_SESSION_COOKIE)?.let { tok ->
+          pc.restoreSessionToken(tok)
+        }
+      }
+    if (backend == BackendKind.Playground) {
+      banner = "Playground · $url"
+      refreshModels()
+    }
+  }
+
+  fun resetControlPlaneBaseUrl() {
+    applyControlPlaneBaseUrl(ControlPlaneClient.PRODUCTION_BASE_URL)
+  }
+
+  fun resetPlaygroundBaseUrl() {
+    applyPlaygroundBaseUrl(PrismClient.PRODUCTION_BASE_URL)
   }
 
   fun playgroundLogin() {
@@ -866,40 +944,55 @@ class AppViewModel(
   }
 
   private fun pickDefaults() {
-    if (selectedModelId == null || chatModels.none { it.id == selectedModelId }) {
+    // Use unfiltered chat list so search does not wipe selection.
+    if (selectedModelId == null || allChatModels.none { it.id == selectedModelId }) {
       selectedModelId =
-        chatModels.firstOrNull { it.spendable != false }?.id
-          ?: chatModels.firstOrNull()?.id
+        allChatModels.firstOrNull { it.spendable != false }?.id
+          ?: allChatModels.firstOrNull()?.id
     }
-    if (selectedImageModelId == null || imageModels.none { it.id == selectedImageModelId }) {
+    val images =
+      models
+        .filter { it.modality == "image" }
+        .filter { !hideUnspendable || it.spendable != false }
+    val videos =
+      models
+        .filter { it.modality == "video" }
+        .filter { !hideUnspendable || it.spendable != false }
+    if (selectedImageModelId == null || images.none { it.id == selectedImageModelId }) {
       selectedImageModelId =
-        imageModels.firstOrNull { it.id.contains("flux-1-schnell") }?.id
-          ?: imageModels.firstOrNull { !it.acceptsImageInput() }?.id
-          ?: imageModels.firstOrNull()?.id
+        images.firstOrNull { it.id.contains("flux-1-schnell") }?.id
+          ?: images.firstOrNull { !it.acceptsImageInput() }?.id
+          ?: images.firstOrNull()?.id
     }
-    if (selectedVideoModelId == null || videoModels.none { it.id == selectedVideoModelId }) {
+    if (selectedVideoModelId == null || videos.none { it.id == selectedVideoModelId }) {
       selectedVideoModelId =
-        videoModels.firstOrNull { it.id == "google/veo-3.1-fast" }?.id
-          ?: videoModels.firstOrNull { it.id.startsWith("google/veo") }?.id
-          ?: videoModels.firstOrNull { it.id == "bytedance/seedance-2.0-fast" }?.id
-          ?: videoModels.firstOrNull {
+        videos.firstOrNull { it.id == "google/veo-3.1-fast" }?.id
+          ?: videos.firstOrNull { it.id.startsWith("google/veo") }?.id
+          ?: videos.firstOrNull { it.id == "bytedance/seedance-2.0-fast" }?.id
+          ?: videos.firstOrNull {
             !it.id.startsWith("minimax/hailuo") && !it.id.startsWith("xai/grok-imagine-video")
           }?.id
-          ?: videoModels.firstOrNull()?.id
+          ?: videos.firstOrNull()?.id
     }
-    if (selectedSpeechModelId == null || speechModels.none { it.id == selectedSpeechModelId }) {
+    val speech =
+      models.filter { it.modality == "tts" }.filter { !hideUnspendable || it.spendable != false }
+    val stt =
+      models.filter { it.modality == "stt" }.filter { !hideUnspendable || it.spendable != false }
+    val music =
+      models.filter { it.modality == "music" }.filter { !hideUnspendable || it.spendable != false }
+    if (selectedSpeechModelId == null || speech.none { it.id == selectedSpeechModelId }) {
       selectedSpeechModelId =
-        speechModels.firstOrNull { it.id.contains("aura-2-en") }?.id
-          ?: speechModels.firstOrNull { it.id.contains("melotts") }?.id
-          ?: speechModels.firstOrNull()?.id
+        speech.firstOrNull { it.id.contains("aura-2-en") }?.id
+          ?: speech.firstOrNull { it.id.contains("melotts") }?.id
+          ?: speech.firstOrNull()?.id
     }
-    if (selectedSttModelId == null || sttModels.none { it.id == selectedSttModelId }) {
+    if (selectedSttModelId == null || stt.none { it.id == selectedSttModelId }) {
       selectedSttModelId =
-        sttModels.firstOrNull { it.id.contains("whisper") }?.id
-          ?: sttModels.firstOrNull()?.id
+        stt.firstOrNull { it.id.contains("whisper") }?.id
+          ?: stt.firstOrNull()?.id
     }
-    if (selectedMusicModelId == null || musicModels.none { it.id == selectedMusicModelId }) {
-      selectedMusicModelId = musicModels.firstOrNull()?.id
+    if (selectedMusicModelId == null || music.none { it.id == selectedMusicModelId }) {
+      selectedMusicModelId = music.firstOrNull()?.id
     }
     persistUIPrefs()
   }
@@ -1421,19 +1514,43 @@ class AppViewModel(
         conversationId = playgroundConversationId,
       )
     if (useStream && model?.streaming != false) {
-      val (text, final) =
-        withContext(Dispatchers.IO) {
-          playground.chatStreamText(body)
-        }
-      turns[assistantIndex] = assistant.copy(text = text.ifEmpty { final?.output.orEmpty() })
-      // conversation id may only appear on non-stream path; keep existing
+      withContext(Dispatchers.IO) {
+        playground.chatStreamEvents(body)
+          .catch { e -> throw e }
+          .collect { ev ->
+            when (ev) {
+              is ChatStreamEvent.Delta -> {
+                withContext(Dispatchers.Main) {
+                  val cur = turns[assistantIndex]
+                  turns[assistantIndex] = cur.copy(text = cur.text + ev.text)
+                }
+              }
+              is ChatStreamEvent.Done -> {
+                withContext(Dispatchers.Main) {
+                  val full = ev.fullText
+                  if (full != null) {
+                    val cur = turns[assistantIndex]
+                    if (cur.text.isEmpty()) {
+                      turns[assistantIndex] = cur.copy(text = full)
+                    }
+                  }
+                  ev.conversationId?.takeIf { it.isNotBlank() }?.let { cid ->
+                    playgroundConversationId = cid
+                  }
+                }
+              }
+              is ChatStreamEvent.Error -> throw PrismError.Server(ev.message)
+              is ChatStreamEvent.Unknown -> Unit
+            }
+          }
+      }
     } else {
       val res =
         withContext(Dispatchers.IO) {
           playground.chat(body)
         }
       turns[assistantIndex] = assistant.copy(text = res.output.orEmpty())
-      res.conversationId?.let {
+      res.conversationId?.takeIf { it.isNotBlank() }?.let {
         playgroundConversationId = it
       }
     }

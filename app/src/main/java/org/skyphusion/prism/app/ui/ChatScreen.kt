@@ -183,6 +183,17 @@ fun ChatScreen(
         OfflineBanner()
       }
 
+      OutlinedTextField(
+        value = vm.modelSearch,
+        onValueChange = { vm.modelSearch = it },
+        modifier =
+          Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 2.dp),
+        label = { Text("Search models") },
+        singleLine = true,
+      )
+
       ModelPicker(vm = vm, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
 
       if (vm.canCompactConversation || vm.canExpandConversation || vm.isCompacted) {
@@ -595,15 +606,20 @@ private fun TurnBubble(
             )
           }
         } else {
-          Text(
-            text = turn.text.ifEmpty { "…" },
-            color =
-              if (isUser) {
-                MaterialTheme.colorScheme.onPrimary
-              } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-              },
-          )
+          val bubbleColor =
+            if (isUser) {
+              MaterialTheme.colorScheme.onPrimary
+            } else {
+              MaterialTheme.colorScheme.onSurfaceVariant
+            }
+          if (isUser || turn.text.isEmpty()) {
+            Text(
+              text = turn.text.ifEmpty { "…" },
+              color = bubbleColor,
+            )
+          } else {
+            MarkdownText(text = turn.text, color = bubbleColor)
+          }
         }
       }
       if (!isUser && !isStreaming) {
