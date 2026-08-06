@@ -8,8 +8,8 @@ Guidance for agents working in this repository.
 [prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane). History / RAG /
 artifacts remain on [prism](https://github.com/skyphusion-labs/prism) (not yet wired in the app).
 
-**v0.3.2:** iOS 0.6.2 parity: health probe, haptics, chat empty state, pull-to-refresh models,
-foreground balance. Grok video **0.4.14+**; Play redeem **0.4.16+**.
+**v0.3.3:** iOS 0.6.3 parity: UI prefs persist, Thinking indicator, share transcript, image retry,
+About links, brand accent. Grok video **0.4.14+**; Play redeem **0.4.16+**.
 
 ## Related
 
