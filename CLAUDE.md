@@ -8,8 +8,9 @@ Guidance for agents working in this repository.
 [prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane). History / RAG /
 artifacts remain on [prism](https://github.com/skyphusion-labs/prism) (not yet wired in the app).
 
-**v0.2.0:** kit client + Compose shell with **Chat / Image / Video** tabs (plane parity with
-iOS media surface). EncryptedSharedPreferences for `pcp_`. Grok video needs plane **0.4.14+**.
+**v0.3.0:** Chat / Image / Video tabs + **Play Billing** top-up (`BillingManager` →
+`/v1/store/redeem` google_play). EncryptedSharedPreferences for `pcp_`. Grok video needs plane
+**0.4.14+**; Play redeem needs plane **0.4.16+** (+ optional service account secret).
 
 ## Related
 
