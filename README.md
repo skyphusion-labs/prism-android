@@ -20,12 +20,12 @@ AGPL **Android client** for Prism against the commercial control plane
 
 ## Status
 
-**v0.4.2** -- More hub + mic STT (iOS 0.8.1 parity):
+**v0.5.0** -- playground dual-backend (developer option, iOS parity):
 
-- Tab bar: **Chat · Image · Video · More** (Audio/Music under More)
-- More hub: account balance/usage lines, plane health, Settings
-- **Record microphone** for STT (AAC/m4a) + import file
-- Prior 0.4.1: photo picker, save gallery, Speak
+- Settings → Developer unlocks **Playground** vs Control plane
+- Playground: login/signup (`/api/auth/*`), models boot probe, chat + stream SSE
+- Product default remains Control plane (metered doors + billing)
+- Prior 0.4.2: More hub + mic STT
 
 Create the three in-app products in Play Console (same product ids as App Store). Production
 redeem needs Worker secret `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` on the plane.

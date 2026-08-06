@@ -29,10 +29,15 @@ object SecretStoreKeys {
   const val USE_STREAM = "org.skyphusion.prism.pref.use-stream"
   const val HIDE_UNSPENDABLE = "org.skyphusion.prism.pref.hide-unspendable"
 
-  /** Playground Worker base URL (compact API host; dual-backend future). */
+  /** Playground Worker base URL. */
   const val PLAYGROUND_BASE_URL = "org.skyphusion.prism.playground.base-url"
   /** Playground session cookie value (`__Host-prism_session`). */
   const val PLAYGROUND_SESSION_COOKIE = "org.skyphusion.prism.playground.session-cookie"
+  const val PLAYGROUND_SESSION_USERNAME = "org.skyphusion.prism.playground.session-username"
+  /** `controlPlane` (default) or `playground`. */
+  const val BACKEND_MODE = "org.skyphusion.prism.backend-mode"
+  /** When true, Settings shows backend switch + URL tinkering. */
+  const val SHOW_DEVELOPER = "org.skyphusion.prism.pref.show-developer"
 }
 
 /** In-memory store (unit tests + non-Android runtimes). Thread-safe. */

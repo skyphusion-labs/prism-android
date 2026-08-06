@@ -26,11 +26,40 @@ import org.skyphusion.prism.ControlPlaneClient
 import org.skyphusion.prism.ControlPlaneModel
 import org.skyphusion.prism.ConversationCompact
 import org.skyphusion.prism.ConversationCompactState
+import org.skyphusion.prism.PlaygroundChatRequest
 import org.skyphusion.prism.PrismClient
 import org.skyphusion.prism.PrismError
 import org.skyphusion.prism.SecretStore
 import org.skyphusion.prism.SecretStoreKeys
 import org.skyphusion.prism.prismUserFacingError
+
+/** Inference backend (iOS BackendKind). Product default is control plane. */
+enum class BackendKind {
+  ControlPlane,
+  Playground,
+  ;
+
+  val title: String
+    get() =
+      when (this) {
+        ControlPlane -> "Control plane"
+        Playground -> "Playground"
+      }
+
+  fun toStorage(): String =
+    when (this) {
+      ControlPlane -> "controlPlane"
+      Playground -> "playground"
+    }
+
+  companion object {
+    fun fromStorage(raw: String?): BackendKind =
+      when (raw?.lowercase()) {
+        "playground", "play" -> Playground
+        else -> ControlPlane
+      }
+  }
+}
 
 data class ChatTurn(
   val id: String = UUID.randomUUID().toString(),
@@ -86,6 +115,24 @@ class AppViewModel(
   var hasDeviceKey by mutableStateOf(!client.clientKey.isNullOrBlank())
     private set
 
+  /** Product default is control plane; playground is behind developer options. */
+  var backend by mutableStateOf(
+    BackendKind.fromStorage(secrets.get(SecretStoreKeys.BACKEND_MODE)),
+  )
+    private set
+  var showDeveloperSettings by mutableStateOf(
+    secrets.get(SecretStoreKeys.SHOW_DEVELOPER)?.let { it == "1" || it.equals("true", true) }
+      ?: false,
+  )
+  var playgroundAuthenticated by mutableStateOf(false)
+    private set
+  var sessionUsername by mutableStateOf(secrets.get(SecretStoreKeys.PLAYGROUND_SESSION_USERNAME))
+    private set
+  var playgroundUsername by mutableStateOf("")
+  var playgroundPassword by mutableStateOf("")
+  var authMode by mutableStateOf<String?>(null)
+    private set
+
   var models = mutableStateListOf<ControlPlaneModel>()
     private set
   var selectedModelId by mutableStateOf(secrets.get(SecretStoreKeys.SELECTED_CHAT_MODEL))
@@ -138,13 +185,33 @@ class AppViewModel(
         false -> "unreachable"
       }
 
+  /** True when the current backend can chat. */
+  val canChat: Boolean
+    get() =
+      when (backend) {
+        BackendKind.ControlPlane -> hasDeviceKey
+        BackendKind.Playground -> playgroundAuthenticated
+      }
+
+  /** Image/video/audio/music doors are plane-only. */
+  val canUseMediaDoors: Boolean
+    get() = backend == BackendKind.ControlPlane && hasDeviceKey
+
+  val needsPlaneEnroll: Boolean
+    get() = backend == BackendKind.ControlPlane && !hasDeviceKey
+
+  val needsPlaygroundLogin: Boolean
+    get() = backend == BackendKind.Playground && !playgroundAuthenticated
+
   /**
    * True when the last turn is an assistant reply we can re-run under the current model.
    * Client owns the transcript on the control plane.
    */
   val canRegenerateLastReply: Boolean
     get() {
-      if (isBusy || !hasDeviceKey) return false
+      if (isBusy || !canChat) return false
+      // Playground history is server-side; regenerate is plane-only (client transcript).
+      if (backend != BackendKind.ControlPlane) return false
       val last = turns.lastOrNull() ?: return false
       if (last.role != ChatTurn.Role.Assistant) return false
       return turns.getOrNull(turns.lastIndex - 1)?.role == ChatTurn.Role.User
@@ -312,21 +379,34 @@ class AppViewModel(
   /** Enough history to compact, and not already compacted. */
   val canCompactConversation: Boolean
     get() {
-      if (!hasDeviceKey || isBusy || compactBusy || isCompacted) return false
+      if (!canChat || isBusy || compactBusy || isCompacted) return false
       if (!isNetworkSatisfied) return false
+      if (backend == BackendKind.Playground && playgroundConversationId.isNullOrBlank()) {
+        return false
+      }
       return completedChatPairCount >= ConversationCompact.MIN_TURNS_TO_COMPACT
     }
 
   val canExpandConversation: Boolean
-    get() = hasDeviceKey && !isBusy && !compactBusy && isCompacted
+    get() = canChat && !isBusy && !compactBusy && isCompacted
 
   init {
     startNetworkMonitor()
     loadSessionsFromDisk()
+    // Restore playground session cookie if present.
+    secrets.get(SecretStoreKeys.PLAYGROUND_SESSION_COOKIE)?.let { tok ->
+      if (playground.restoreSessionToken(tok)) {
+        playgroundAuthenticated = true
+      }
+    }
     probePlaneHealth()
-    if (hasDeviceKey) {
-      refreshAccount()
-      refreshModels()
+    when (backend) {
+      BackendKind.ControlPlane ->
+        if (hasDeviceKey) {
+          refreshAccount()
+          refreshModels()
+        }
+      BackendKind.Playground -> refreshModels()
     }
   }
 
@@ -343,7 +423,115 @@ class AppViewModel(
   /** Foreground resume: health + balance when enrolled (iOS onBecomeActive). */
   fun onBecomeActive() {
     probePlaneHealth()
-    if (hasDeviceKey) refreshAccount()
+    if (backend == BackendKind.ControlPlane && hasDeviceKey) refreshAccount()
+  }
+
+  fun updateShowDeveloperSettings(on: Boolean) {
+    showDeveloperSettings = on
+    secrets.set(SecretStoreKeys.SHOW_DEVELOPER, if (on) "1" else "0")
+    if (!on && backend == BackendKind.Playground) {
+      updateBackend(BackendKind.ControlPlane)
+    }
+  }
+
+  fun updateBackend(kind: BackendKind) {
+    if (backend == kind) return
+    backend = kind
+    secrets.set(SecretStoreKeys.BACKEND_MODE, kind.toStorage())
+    models.clear()
+    selectedModelId = null
+    errorMessage = null
+    banner =
+      when (kind) {
+        BackendKind.ControlPlane -> "Control plane · $baseUrl"
+        BackendKind.Playground -> "Playground · ${playground.http.root}"
+      }
+    when (kind) {
+      BackendKind.ControlPlane -> {
+        if (hasDeviceKey) {
+          refreshAccount()
+          refreshModels()
+        }
+      }
+      BackendKind.Playground -> refreshModels()
+    }
+  }
+
+  fun playgroundLogin() {
+    val user = playgroundUsername.trim()
+    val pass = playgroundPassword
+    if (user.isEmpty() || pass.isEmpty()) {
+      errorMessage = "Username and password required"
+      return
+    }
+    viewModelScope.launch {
+      isBusy = true
+      errorMessage = null
+      try {
+        val res =
+          withContext(Dispatchers.IO) {
+            playground.login(user, pass)
+          }
+        playgroundAuthenticated = true
+        sessionUsername = res.user?.username ?: user
+        secrets.set(SecretStoreKeys.PLAYGROUND_SESSION_USERNAME, sessionUsername)
+        persistPlaygroundSession()
+        playgroundPassword = ""
+        banner = "Signed in · ${sessionUsername}"
+        refreshModels()
+      } catch (e: Exception) {
+        errorMessage = e.toUserMessage()
+      } finally {
+        isBusy = false
+      }
+    }
+  }
+
+  fun playgroundSignup() {
+    val user = playgroundUsername.trim()
+    val pass = playgroundPassword
+    if (user.isEmpty() || pass.isEmpty()) {
+      errorMessage = "Username and password required"
+      return
+    }
+    viewModelScope.launch {
+      isBusy = true
+      errorMessage = null
+      try {
+        val res =
+          withContext(Dispatchers.IO) {
+            playground.signup(user, pass)
+          }
+        playgroundAuthenticated = true
+        sessionUsername = res.user?.username ?: user
+        secrets.set(SecretStoreKeys.PLAYGROUND_SESSION_USERNAME, sessionUsername)
+        persistPlaygroundSession()
+        playgroundPassword = ""
+        banner = "Account created · ${sessionUsername}"
+        refreshModels()
+      } catch (e: Exception) {
+        errorMessage = e.toUserMessage()
+      } finally {
+        isBusy = false
+      }
+    }
+  }
+
+  fun playgroundLogout() {
+    viewModelScope.launch {
+      try {
+        withContext(Dispatchers.IO) { playground.logout() }
+      } catch (_: Exception) {
+        playground.clearSession()
+      }
+      playgroundAuthenticated = false
+      sessionUsername = null
+      secrets.set(SecretStoreKeys.PLAYGROUND_SESSION_COOKIE, null)
+      secrets.set(SecretStoreKeys.PLAYGROUND_SESSION_USERNAME, null)
+      models.clear()
+      playgroundConversationId = null
+      banner = "Playground · signed out"
+    }
   }
 
   private fun startNetworkMonitor() {
@@ -633,20 +821,43 @@ class AppViewModel(
   }
 
   fun refreshModels() {
-    if (!hasDeviceKey) return
     viewModelScope.launch {
       isBusy = true
       errorMessage = null
       try {
-        val list =
-          withContext(Dispatchers.IO) {
-            client.listModels().data
+        when (backend) {
+          BackendKind.ControlPlane -> {
+            if (!hasDeviceKey) return@launch
+            val list =
+              withContext(Dispatchers.IO) {
+                client.listModels().data
+              }
+            models.clear()
+            models.addAll(list)
           }
-        models.clear()
-        models.addAll(list)
+          BackendKind.Playground -> {
+            val res =
+              withContext(Dispatchers.IO) {
+                playground.models()
+              }
+            authMode = res.mode
+            if (res.authenticated == true) {
+              playgroundAuthenticated = true
+              res.username?.let { sessionUsername = it }
+              persistPlaygroundSession()
+            } else if (res.mode == "public") {
+              // Cookie may have expired.
+              if (playground.exportSessionToken() == null) {
+                playgroundAuthenticated = false
+              }
+            }
+            models.clear()
+            models.addAll(res.models.map { it.toControlPlaneModel() })
+          }
+        }
         pickDefaults()
       } catch (e: Exception) {
-        handleAuthError(e)
+        if (backend == BackendKind.ControlPlane) handleAuthError(e)
         errorMessage = e.toUserMessage()
       } finally {
         isBusy = false
@@ -1074,8 +1285,12 @@ class AppViewModel(
   private fun performSend(mode: SendMode) {
     val modelId = selectedModelId ?: selectedChatModel?.id
     if (modelId == null || isBusy) return
-    if (!hasDeviceKey) {
-      errorMessage = "Enroll a device key before chatting."
+    if (!canChat) {
+      errorMessage =
+        when (backend) {
+          BackendKind.ControlPlane -> "Enroll a device key before chatting."
+          BackendKind.Playground -> "Sign in (or sign up) before chatting on the playground."
+        }
       return
     }
     if (!isNetworkSatisfied) {
@@ -1083,7 +1298,7 @@ class AppViewModel(
       return
     }
     val model = models.firstOrNull { it.id == modelId }
-    if (model?.spendable == false) {
+    if (backend == BackendKind.ControlPlane && model?.spendable == false) {
       errorMessage = "Model is not spendable on this plan"
       return
     }
@@ -1121,56 +1336,15 @@ class AppViewModel(
         isBusy = true
         errorMessage = null
         try {
-          // With compact active: inject summary system block and only turns after
-          // through_turn_index (prism v0.175.7 parity). UI transcript unchanged.
-          val history = buildPlaneChatMessages(excludeAssistantIndex = assistantIndex)
-
-          if (useStream && model?.streaming != false) {
-            val req =
-              ControlPlaneChatRequest(
-                model = modelId,
-                messages = history,
-                stream = true,
-              )
-            withContext(Dispatchers.IO) {
-              client.chatCompletionsStream(req)
-                .catch { e -> throw e }
-                .collect { ev ->
-                  when (ev) {
-                    is ChatStreamEvent.Delta -> {
-                      withContext(Dispatchers.Main) {
-                        val cur = turns[assistantIndex]
-                        turns[assistantIndex] = cur.copy(text = cur.text + ev.text)
-                      }
-                    }
-                    is ChatStreamEvent.Done -> {
-                      val full = ev.fullText
-                      if (full != null) {
-                        withContext(Dispatchers.Main) {
-                          val cur = turns[assistantIndex]
-                          if (cur.text.isEmpty()) {
-                            turns[assistantIndex] = cur.copy(text = full)
-                          }
-                        }
-                      }
-                    }
-                    is ChatStreamEvent.Error -> throw PrismError.Server(ev.message)
-                    is ChatStreamEvent.Unknown -> Unit
-                  }
-                }
-            }
-          } else {
-            val reply =
-              withContext(Dispatchers.IO) {
-                client.chat(model = modelId, messages = history)
-              }
-            turns[assistantIndex] = assistant.copy(text = reply)
+          when (backend) {
+            BackendKind.ControlPlane -> sendPlane(modelId, model, assistantIndex, assistant)
+            BackendKind.Playground -> sendPlayground(modelId, model, text, assistantIndex, assistant)
           }
-          refreshAccount()
+          if (backend == BackendKind.ControlPlane) refreshAccount()
           persistCurrentSession()
         } catch (e: Exception) {
           if (e is kotlinx.coroutines.CancellationException) throw e
-          handleAuthError(e)
+          if (backend == BackendKind.ControlPlane) handleAuthError(e)
           errorMessage = e.toUserMessage()
           recordChatFailure(text)
           if (turns.getOrNull(assistantIndex)?.text.isNullOrEmpty()) {
@@ -1181,6 +1355,88 @@ class AppViewModel(
           isBusy = false
         }
       }
+  }
+
+  private suspend fun sendPlane(
+    modelId: String,
+    model: ControlPlaneModel?,
+    assistantIndex: Int,
+    assistant: ChatTurn,
+  ) {
+    val history = buildPlaneChatMessages(excludeAssistantIndex = assistantIndex)
+    if (useStream && model?.streaming != false) {
+      val req =
+        ControlPlaneChatRequest(
+          model = modelId,
+          messages = history,
+          stream = true,
+        )
+      withContext(Dispatchers.IO) {
+        client.chatCompletionsStream(req)
+          .catch { e -> throw e }
+          .collect { ev ->
+            when (ev) {
+              is ChatStreamEvent.Delta -> {
+                withContext(Dispatchers.Main) {
+                  val cur = turns[assistantIndex]
+                  turns[assistantIndex] = cur.copy(text = cur.text + ev.text)
+                }
+              }
+              is ChatStreamEvent.Done -> {
+                val full = ev.fullText
+                if (full != null) {
+                  withContext(Dispatchers.Main) {
+                    val cur = turns[assistantIndex]
+                    if (cur.text.isEmpty()) {
+                      turns[assistantIndex] = cur.copy(text = full)
+                    }
+                  }
+                }
+              }
+              is ChatStreamEvent.Error -> throw PrismError.Server(ev.message)
+              is ChatStreamEvent.Unknown -> Unit
+            }
+          }
+      }
+    } else {
+      val reply =
+        withContext(Dispatchers.IO) {
+          client.chat(model = modelId, messages = history)
+        }
+      turns[assistantIndex] = assistant.copy(text = reply)
+    }
+  }
+
+  private suspend fun sendPlayground(
+    modelId: String,
+    model: ControlPlaneModel?,
+    userText: String,
+    assistantIndex: Int,
+    assistant: ChatTurn,
+  ) {
+    val body =
+      PlaygroundChatRequest(
+        model = modelId,
+        userInput = userText,
+        conversationId = playgroundConversationId,
+      )
+    if (useStream && model?.streaming != false) {
+      val (text, final) =
+        withContext(Dispatchers.IO) {
+          playground.chatStreamText(body)
+        }
+      turns[assistantIndex] = assistant.copy(text = text.ifEmpty { final?.output.orEmpty() })
+      // conversation id may only appear on non-stream path; keep existing
+    } else {
+      val res =
+        withContext(Dispatchers.IO) {
+          playground.chat(body)
+        }
+      turns[assistantIndex] = assistant.copy(text = res.output.orEmpty())
+      res.conversationId?.let {
+        playgroundConversationId = it
+      }
+    }
   }
 
   fun generateImage() {
@@ -1430,7 +1686,8 @@ class AppViewModel(
   private var speechPlayer: android.media.MediaPlayer? = null
 
   val canSpeakText: Boolean
-    get() = hasDeviceKey && speechModels.any { it.spendable != false } && !speechBusy
+    get() =
+      canUseMediaDoors && speechModels.any { it.spendable != false } && !speechBusy
 
   fun generateSpeech(autoPlay: Boolean = false) {
     val modelId = selectedSpeechModelId ?: selectedSpeechModel?.id ?: return

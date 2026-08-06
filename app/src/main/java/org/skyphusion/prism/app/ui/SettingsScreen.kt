@@ -42,9 +42,11 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import org.skyphusion.prism.ControlPlaneClient
+import org.skyphusion.prism.PrismClient
 import org.skyphusion.prism.PrismKit
 import org.skyphusion.prism.StoreProducts
 import org.skyphusion.prism.app.AppViewModel
+import org.skyphusion.prism.app.BackendKind
 import org.skyphusion.prism.app.BillingManager
 import org.skyphusion.prism.app.Haptics
 
@@ -129,101 +131,182 @@ fun SettingsScreen(
         OfflineBanner(Modifier.padding(bottom = 12.dp))
       }
 
-      Text("Control plane", style = MaterialTheme.typography.titleMedium)
+      Text("Session", style = MaterialTheme.typography.titleMedium)
+      Text("Backend: ${vm.backend.title}", style = MaterialTheme.typography.bodyMedium)
       Text(
-        ControlPlaneClient.PRODUCTION_BASE_URL,
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-      )
-      Spacer(Modifier.height(8.dp))
-      Text(
-        "Device key: ${if (vm.hasDeviceKey) "stored (EncryptedSharedPreferences)" else "none"}",
-        style = MaterialTheme.typography.bodyMedium,
-      )
-      Spacer(Modifier.height(4.dp))
-      Text(
-        "Plane health: ${vm.planeHealthLabel}",
-        style = MaterialTheme.typography.bodyMedium,
-        color =
-          when (vm.planeHealthOk) {
-            false -> MaterialTheme.colorScheme.error
-            true -> MaterialTheme.colorScheme.primary
-            null -> MaterialTheme.colorScheme.onSurface
-          },
-      )
-      TextButton(onClick = { vm.probePlaneHealth(); vm.refreshModels() }) {
-        Text("Refresh health + models")
-      }
-      vm.balance?.let {
-        Spacer(Modifier.height(4.dp))
-        Text("Balance: $it", style = MaterialTheme.typography.bodyMedium)
-      }
-      Text(
-        "Spendable is prepaid + monthly allowance. Top-ups redeem via Play Billing to the plane.",
+        "Mode: ${vm.authMode ?: if (vm.backend == BackendKind.ControlPlane) "plane" else "unknown"}",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(top = 8.dp),
       )
-
-      Spacer(Modifier.height(24.dp))
-      Text("Credit top-up", style = MaterialTheme.typography.titleMedium)
-      Spacer(Modifier.height(8.dp))
-
-      if (billingBusy && products.isEmpty()) {
-        CircularProgressIndicator(modifier = Modifier.padding(8.dp))
-      } else if (products.isEmpty()) {
+      if (vm.backend == BackendKind.Playground) {
         Text(
-          "No products loaded yet. SKUs: ${StoreProducts.allCreditPacks.joinToString()}",
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          "Signed in: ${if (vm.playgroundAuthenticated) (vm.sessionUsername ?: "yes") else "no"}",
+          style = MaterialTheme.typography.bodyMedium,
         )
-        TextButton(
-          onClick = { scope.launch { billing.queryProducts() } },
-          enabled = !billingBusy,
-        ) {
-          Text("Retry product load")
-        }
-      } else {
-        billing.sortedProducts.forEach { product ->
-          val price = product.oneTimePurchaseOfferDetails?.formattedPrice ?: "—"
-          val usd = StoreProducts.creditUsd(product.productId)
-          Button(
-            onClick = {
-              if (activity != null) {
-                billing.launchPurchase(activity, product)
-              }
-            },
-            enabled = vm.hasDeviceKey && !billingBusy && activity != null,
-            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-          ) {
-            Text(
-              buildString {
-                append(product.name.ifBlank { product.productId })
-                if (usd != null) append(" · $$usd credit")
-                append(" · ")
-                append(price)
-              },
-            )
+        if (vm.playgroundAuthenticated) {
+          TextButton(onClick = { vm.playgroundLogout(); onBack() }) {
+            Text("Sign out")
           }
         }
+      } else {
+        Text(
+          "Device key: ${if (vm.hasDeviceKey) "stored (EncryptedSharedPreferences)" else "none"}",
+          style = MaterialTheme.typography.bodyMedium,
+        )
+        Text(
+          "Plane health: ${vm.planeHealthLabel}",
+          style = MaterialTheme.typography.bodyMedium,
+          color =
+            when (vm.planeHealthOk) {
+              false -> MaterialTheme.colorScheme.error
+              true -> MaterialTheme.colorScheme.primary
+              null -> MaterialTheme.colorScheme.onSurface
+            },
+        )
       }
-
-      billingStatus?.let {
-        Spacer(Modifier.height(8.dp))
-        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-      }
-      billingError?.let {
-        Spacer(Modifier.height(4.dp))
-        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-      }
+      Text("Models: ${vm.models.size}", style = MaterialTheme.typography.bodySmall)
       Text(
-        "Consumable Play packs. After purchase, the app sends the purchase token to the plane " +
-          "(POST /v1/store/redeem, platform=google_play) and refreshes balance. " +
-          "Plane 0.4.16+ with GOOGLE_PLAY_SERVICE_ACCOUNT_JSON for production verify.",
+        "PrismKit ${PrismKit.VERSION}",
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-        modifier = Modifier.padding(top = 8.dp),
       )
+      TextButton(onClick = { vm.probePlaneHealth(); vm.refreshModels() }) {
+        Text("Refresh models / health")
+      }
+
+      if (vm.backend == BackendKind.ControlPlane) {
+        Spacer(Modifier.height(16.dp))
+        Text("Control plane", style = MaterialTheme.typography.titleMedium)
+        Text(
+          ControlPlaneClient.PRODUCTION_BASE_URL,
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+        )
+        vm.balance?.let {
+          Spacer(Modifier.height(4.dp))
+          Text("Balance: $it", style = MaterialTheme.typography.bodyMedium)
+        }
+        vm.planeUsageLines.forEach { line ->
+          Text(
+            line,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
+        Text(
+          "Spendable is prepaid + monthly allowance. Top-ups redeem via Play Billing to the plane.",
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          modifier = Modifier.padding(top = 8.dp),
+        )
+
+        Spacer(Modifier.height(24.dp))
+        Text("Credit top-up", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(8.dp))
+
+        if (billingBusy && products.isEmpty()) {
+          CircularProgressIndicator(modifier = Modifier.padding(8.dp))
+        } else if (products.isEmpty()) {
+          Text(
+            "No products loaded yet. SKUs: ${StoreProducts.allCreditPacks.joinToString()}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+          TextButton(
+            onClick = { scope.launch { billing.queryProducts() } },
+            enabled = !billingBusy,
+          ) {
+            Text("Retry product load")
+          }
+        } else {
+          billing.sortedProducts.forEach { product ->
+            val price = product.oneTimePurchaseOfferDetails?.formattedPrice ?: "—"
+            val usd = StoreProducts.creditUsd(product.productId)
+            Button(
+              onClick = {
+                if (activity != null) {
+                  billing.launchPurchase(activity, product)
+                }
+              },
+              enabled = vm.hasDeviceKey && !billingBusy && activity != null,
+              modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            ) {
+              Text(
+                buildString {
+                  append(product.name.ifBlank { product.productId })
+                  if (usd != null) append(" · $$usd credit")
+                  append(" · ")
+                  append(price)
+                },
+              )
+            }
+          }
+        }
+
+        billingStatus?.let {
+          Spacer(Modifier.height(8.dp))
+          Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        billingError?.let {
+          Spacer(Modifier.height(4.dp))
+          Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
+        Text(
+          "Consumable Play packs. After purchase, the app sends the purchase token to the plane " +
+            "(POST /v1/store/redeem, platform=google_play) and refreshes balance. " +
+            "Plane 0.4.16+ with GOOGLE_PLAY_SERVICE_ACCOUNT_JSON for production verify.",
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+          modifier = Modifier.padding(top = 8.dp),
+        )
+
+        Spacer(Modifier.height(16.dp))
+        Text("Enrollment", style = MaterialTheme.typography.titleMedium)
+        Text(
+          "Paste a one-time enrollment token or a full pcp_ device key from the clipboard.",
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
+        )
+        TextButton(
+          onClick = {
+            if (vm.pasteEnrollmentFromClipboard(readClipboardText(context))) {
+              Haptics.light(view)
+            }
+          },
+        ) {
+          Text("Paste from clipboard")
+        }
+        vm.errorMessage?.let {
+          Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
+
+        Spacer(Modifier.height(24.dp))
+        Button(
+          onClick = { confirmClearKey = true },
+          colors =
+            ButtonDefaults.buttonColors(
+              containerColor = MaterialTheme.colorScheme.error,
+            ),
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Text("Forget device key")
+        }
+      } else {
+        Spacer(Modifier.height(16.dp))
+        Text("Playground", style = MaterialTheme.typography.titleMedium)
+        Text(
+          PrismClient.PRODUCTION_BASE_URL,
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+        )
+        Text(
+          "Chat uses the Worker session. Image/video/audio/music doors require control plane.",
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          modifier = Modifier.padding(top = 8.dp),
+        )
+      }
 
       Spacer(Modifier.height(16.dp))
       Text("Preferences", style = MaterialTheme.typography.titleMedium)
@@ -238,38 +321,38 @@ fun SettingsScreen(
           onCheckedChange = { vm.updateHideUnspendable(it) },
         )
       }
-
-      Spacer(Modifier.height(16.dp))
-      Text("Enrollment", style = MaterialTheme.typography.titleMedium)
-      Text(
-        "Paste a one-time enrollment token or a full pcp_ device key from the clipboard.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
-      )
-      TextButton(
-        onClick = {
-          if (vm.pasteEnrollmentFromClipboard(readClipboardText(context))) {
-            Haptics.light(view)
-          }
-        },
-      ) {
-        Text("Paste from clipboard")
-      }
-      vm.errorMessage?.let {
-        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-      }
-
-      Spacer(Modifier.height(24.dp))
-      Button(
-        onClick = { confirmClearKey = true },
-        colors =
-          ButtonDefaults.buttonColors(
-            containerColor = MaterialTheme.colorScheme.error,
-          ),
+      Spacer(Modifier.height(8.dp))
+      Row(
         modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween,
       ) {
-        Text("Forget device key")
+        Text("Developer options", style = MaterialTheme.typography.bodyMedium)
+        Switch(
+          checked = vm.showDeveloperSettings,
+          onCheckedChange = { vm.updateShowDeveloperSettings(it) },
+        )
+      }
+      Text(
+        "Unlocks playground backend switch. Product default is Control plane.",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+      if (vm.showDeveloperSettings) {
+        Spacer(Modifier.height(12.dp))
+        Text("Backend", style = MaterialTheme.typography.titleSmall)
+        Spacer(Modifier.height(4.dp))
+        BackendKind.entries.forEach { kind ->
+          Button(
+            onClick = {
+              Haptics.light(view)
+              vm.updateBackend(kind)
+            },
+            enabled = vm.backend != kind,
+            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+          ) {
+            Text(kind.title + if (vm.backend == kind) " (active)" else "")
+          }
+        }
       }
 
       Spacer(Modifier.height(24.dp))

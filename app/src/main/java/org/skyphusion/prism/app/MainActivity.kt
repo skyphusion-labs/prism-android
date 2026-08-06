@@ -19,6 +19,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import org.skyphusion.prism.app.ui.EnrollScreen
+import org.skyphusion.prism.app.ui.LoginScreen
 import org.skyphusion.prism.app.ui.PlaneShell
 import org.skyphusion.prism.app.ui.PrismTheme
 import org.skyphusion.prism.app.ui.SessionListScreen
@@ -59,18 +60,24 @@ class MainActivity : ComponentActivity() {
             onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
           }
 
+          val inApp = vm.canChat
           when {
-            showSettings && vm.hasDeviceKey ->
+            showSettings && (inApp || vm.showDeveloperSettings || vm.needsPlaygroundLogin) ->
               SettingsScreen(
                 vm = vm,
                 onBack = { showSettings = false },
               )
-            showSessions && vm.hasDeviceKey ->
+            showSessions && inApp ->
               SessionListScreen(
                 vm = vm,
                 onBack = { showSessions = false },
               )
-            !vm.hasDeviceKey -> EnrollScreen(vm)
+            vm.needsPlaygroundLogin ->
+              LoginScreen(
+                vm = vm,
+                onOpenSettings = { showSettings = true },
+              )
+            vm.needsPlaneEnroll -> EnrollScreen(vm)
             else ->
               PlaneShell(
                 vm = vm,
