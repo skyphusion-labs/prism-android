@@ -82,6 +82,28 @@ class MediaCodecTest {
   }
 
   @Test
+  fun usageDualPoolLines() {
+    val u =
+      prismJson.decodeFromString(
+        UsageSummary.serializer(),
+        """
+        {
+          "spendable_remaining_micro_usd": 1500000,
+          "remaining_micro_usd": 500000,
+          "allowance_remaining_micro_usd": 1000000,
+          "period": "2026-08",
+          "overage": false
+        }
+        """.trimIndent(),
+      )
+    val lines = u.dualPoolLines()
+    assertTrue(lines.any { it.startsWith("Spendable:") })
+    assertTrue(lines.any { it.startsWith("Prepaid remaining:") })
+    assertTrue(lines.any { it.startsWith("Monthly remaining:") })
+    assertTrue(lines.any { it.startsWith("Period:") })
+  }
+
+  @Test
   fun musicResponseUrlAndBase64() {
     val url =
       prismJson.decodeFromString(

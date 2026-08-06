@@ -1,5 +1,7 @@
 package org.skyphusion.prism.app.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -13,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -31,7 +34,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -40,19 +46,39 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import kotlinx.coroutines.delay
 import org.skyphusion.prism.app.AppViewModel
 import org.skyphusion.prism.app.Haptics
+import org.skyphusion.prism.app.MicRecorder
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AudioScreen(
   vm: AppViewModel,
   onOpenSettings: () -> Unit,
+  onBack: (() -> Unit)? = null,
 ) {
   val context = LocalContext.current
   val view = LocalView.current
   var speechExpanded by remember { mutableStateOf(false) }
   var sttExpanded by remember { mutableStateOf(false) }
+  val mic = remember { MicRecorder(context.applicationContext) }
+  var recording by remember { mutableStateOf(false) }
+  var recordElapsed by remember { mutableIntStateOf(0) }
+  var sttAudioLabel by remember { mutableStateOf("") }
+
+  DisposableEffect(Unit) {
+    onDispose { mic.cancel() }
+  }
+
+  LaunchedEffect(recording) {
+    while (recording) {
+      delay(1_000)
+      mic.tickElapsed()
+      recordElapsed = mic.elapsedSeconds
+    }
+  }
 
   val pickAudio =
     rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -62,10 +88,56 @@ fun AudioScreen(
         val mime = context.contentResolver.getType(uri) ?: "audio/mpeg"
         val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
         vm.setSttAudioBase64(mime, b64)
+        sttAudioLabel = "Imported file (${bytes.size} bytes)"
       } catch (e: Exception) {
         vm.speechError = e.message ?: "Could not read audio file"
       }
     }
+
+  val requestMic =
+    rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+      if (granted) {
+        if (mic.start()) {
+          recording = true
+          recordElapsed = 0
+          Haptics.light(view)
+        } else {
+          vm.speechError = mic.errorMessage ?: "Could not start recording"
+        }
+      } else {
+        vm.speechError = "Microphone permission denied. Enable it in Settings."
+      }
+    }
+
+  fun startRecording() {
+    val ok =
+      ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+        PackageManager.PERMISSION_GRANTED
+    if (!ok) {
+      requestMic.launch(Manifest.permission.RECORD_AUDIO)
+      return
+    }
+    if (mic.start()) {
+      recording = true
+      recordElapsed = 0
+      Haptics.light(view)
+    } else {
+      vm.speechError = mic.errorMessage ?: "Could not start recording"
+    }
+  }
+
+  fun stopRecording() {
+    val cap = mic.stop()
+    recording = false
+    if (cap != null) {
+      val (bytes, _) = cap
+      vm.setSttAudioBase64("audio/mp4", Base64.encodeToString(bytes, Base64.NO_WRAP))
+      sttAudioLabel = "Recording (${recordElapsed}s, ${bytes.size} bytes)"
+      Haptics.success(view)
+    } else {
+      vm.speechError = mic.errorMessage ?: "No audio captured"
+    }
+  }
 
   Scaffold(
     topBar = {
@@ -75,6 +147,13 @@ fun AudioScreen(
             Text("Audio")
             vm.balance?.let {
               Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+          }
+        },
+        navigationIcon = {
+          if (onBack != null) {
+            IconButton(onClick = onBack) {
+              Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
             }
           }
         },
@@ -168,26 +247,64 @@ fun AudioScreen(
         Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
       }
       Text(
-        "Pick an audio file (mp3/wav/m4a). Clip is sent as base64 to the plane.",
+        "Record from the mic (AAC/m4a) or pick a file. Clip is sent as base64 to the plane.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
       )
-      TextButton(onClick = { pickAudio.launch("audio/*") }) {
-        Text(if (vm.sttAudioDataUrl.isBlank()) "Choose audio file" else "Replace audio file")
+      if (recording) {
+        Text(
+          "Recording ${recordElapsed}s…",
+          style = MaterialTheme.typography.bodyMedium,
+          color = MaterialTheme.colorScheme.error,
+        )
+        Button(
+          onClick = { stopRecording() },
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Text("Stop and use recording")
+        }
+        TextButton(
+          onClick = {
+            mic.cancel()
+            recording = false
+            recordElapsed = 0
+          },
+        ) {
+          Text("Cancel recording")
+        }
+      } else {
+        Button(
+          onClick = { startRecording() },
+          enabled = !vm.speechBusy,
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Text("Record microphone")
+        }
+        TextButton(onClick = { pickAudio.launch("audio/*") }) {
+          Text(if (vm.sttAudioDataUrl.isBlank()) "Import audio file" else "Replace audio file")
+        }
       }
       if (vm.sttAudioDataUrl.isNotBlank()) {
         Text(
-          "Audio loaded (${vm.sttAudioDataUrl.length} chars data URL)",
+          sttAudioLabel.ifBlank { "Audio loaded (${vm.sttAudioDataUrl.length} chars data URL)" },
           style = MaterialTheme.typography.labelSmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        TextButton(
+          onClick = {
+            vm.sttAudioDataUrl = ""
+            sttAudioLabel = ""
+          },
+        ) {
+          Text("Clear audio")
+        }
       }
       Button(
         onClick = {
           Haptics.light(view)
           vm.transcribeAudio()
         },
-        enabled = vm.sttModels.isNotEmpty() && vm.sttAudioDataUrl.isNotBlank() && !vm.speechBusy,
+        enabled = vm.sttModels.isNotEmpty() && vm.sttAudioDataUrl.isNotBlank() && !vm.speechBusy && !recording,
         modifier = Modifier.fillMaxWidth(),
       ) {
         Text("Transcribe")

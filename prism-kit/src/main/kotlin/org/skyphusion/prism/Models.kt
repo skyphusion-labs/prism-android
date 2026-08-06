@@ -139,6 +139,33 @@ data class UsageSummary(
     }
     return "usage unknown"
   }
+
+  /** Multi-line dual-pool summary for Settings / More hub (iOS dualPoolLines). */
+  fun dualPoolLines(): List<String> {
+    val lines = mutableListOf<String>()
+    val spendable = spendableRemainingMicroUsd ?: remainingMicroUsd
+    if (spendable != null) {
+      lines.add(String.format("Spendable: $%.4f", spendable / 1_000_000.0))
+    }
+    remainingMicroUsd?.let {
+      lines.add(String.format("Prepaid remaining: $%.4f", it / 1_000_000.0))
+    } ?: creditMicroUsd?.let {
+      lines.add(String.format("Prepaid credit: $%.4f", it / 1_000_000.0))
+    }
+    allowanceRemainingMicroUsd?.let {
+      lines.add(String.format("Monthly remaining: $%.4f", it / 1_000_000.0))
+    } ?: run {
+      val incl = monthlyIncludedMicroUsd
+      val spent = allowanceSpentMicroUsd
+      if (incl != null && spent != null) {
+        val rem = (incl - spent).coerceAtLeast(0)
+        lines.add(String.format("Monthly remaining: $%.4f", rem / 1_000_000.0))
+      }
+    }
+    period?.let { lines.add("Period: $it") }
+    if (overage == true) lines.add("Overage: yes")
+    return lines
+  }
 }
 
 @Serializable

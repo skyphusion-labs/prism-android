@@ -20,12 +20,12 @@ AGPL **Android client** for Prism against the commercial control plane
 
 ## Status
 
-**v0.4.1** -- media polish + Speak (iOS Photos/save/speak parity):
+**v0.4.2** -- More hub + mic STT (iOS 0.8.1 parity):
 
-- Photo picker for i2i / i2v reference; **Save to Photos** for generated images
-- Base64 image decode preview; share image URL
-- **Speak** on assistant turns (TTS + auto-play)
-- Prior 0.4.0: multi-session chats, Audio/Music tabs
+- Tab bar: **Chat · Image · Video · More** (Audio/Music under More)
+- More hub: account balance/usage lines, plane health, Settings
+- **Record microphone** for STT (AAC/m4a) + import file
+- Prior 0.4.1: photo picker, save gallery, Speak
 
 Create the three in-app products in Play Console (same product ids as App Store). Production
 redeem needs Worker secret `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` on the plane.
