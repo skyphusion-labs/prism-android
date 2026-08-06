@@ -100,6 +100,15 @@ fun ChatScreen(
         Switch(checked = vm.useStream, onCheckedChange = { vm.useStream = it })
       }
 
+      if (vm.chatContextTurnCount > 0) {
+        Text(
+          "${vm.chatContextTurnCount} turn(s) · switch models anytime; context kept until clear",
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+        )
+      }
+
       LazyColumn(
         state = listState,
         modifier =
@@ -168,7 +177,7 @@ private fun ModelPicker(vm: AppViewModel, modifier: Modifier = Modifier) {
       value = label,
       onValueChange = {},
       readOnly = true,
-      label = { Text("Model") },
+      label = { Text("Model (keeps chat context)") },
       trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
       modifier =
         Modifier
@@ -176,7 +185,9 @@ private fun ModelPicker(vm: AppViewModel, modifier: Modifier = Modifier) {
           .fillMaxWidth(),
     )
     ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-      vm.models.forEach { m ->
+      val chatModels =
+        vm.models.filter { it.modality == "chat" && (!vm.hideUnspendable || it.spendable != false) }
+      chatModels.forEach { m ->
         val spendable = m.spendable != false
         DropdownMenuItem(
           text = {
@@ -192,7 +203,8 @@ private fun ModelPicker(vm: AppViewModel, modifier: Modifier = Modifier) {
           },
           onClick = {
             if (spendable) {
-              vm.selectedModelId = m.id
+              // Never clears turns -- same conversation, next model.
+              vm.selectChatModel(m.id)
               expanded = false
             }
           },
@@ -210,30 +222,43 @@ private fun TurnBubble(turn: ChatTurn) {
     modifier = Modifier.fillMaxWidth(),
     horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
   ) {
-    Box(
-      modifier =
-        Modifier
-          .widthIn(max = 320.dp)
-          .background(
-            color =
-              if (isUser) {
-                MaterialTheme.colorScheme.primary
-              } else {
-                MaterialTheme.colorScheme.surfaceVariant
-              },
-            shape = RoundedCornerShape(12.dp),
+    Column(horizontalAlignment = if (isUser) Alignment.End else Alignment.Start) {
+      if (!isUser) {
+        val modelTag = turn.modelLabel ?: turn.modelId
+        if (modelTag != null) {
+          Text(
+            modelTag,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 2.dp, start = 4.dp),
           )
-          .padding(12.dp),
-    ) {
-      Text(
-        text = turn.text.ifEmpty { "…" },
-        color =
-          if (isUser) {
-            MaterialTheme.colorScheme.onPrimary
-          } else {
-            MaterialTheme.colorScheme.onSurfaceVariant
-          },
-      )
+        }
+      }
+      Box(
+        modifier =
+          Modifier
+            .widthIn(max = 320.dp)
+            .background(
+              color =
+                if (isUser) {
+                  MaterialTheme.colorScheme.primary
+                } else {
+                  MaterialTheme.colorScheme.surfaceVariant
+                },
+              shape = RoundedCornerShape(12.dp),
+            )
+            .padding(12.dp),
+      ) {
+        Text(
+          text = turn.text.ifEmpty { "…" },
+          color =
+            if (isUser) {
+              MaterialTheme.colorScheme.onPrimary
+            } else {
+              MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
+      }
     }
   }
 }

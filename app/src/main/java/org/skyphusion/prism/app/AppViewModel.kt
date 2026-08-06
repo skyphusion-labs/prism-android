@@ -23,10 +23,18 @@ import org.skyphusion.prism.SecretStore
 import org.skyphusion.prism.SecretStoreKeys
 import org.skyphusion.prism.prismUserFacingError
 
+/**
+ * In-memory chat turn. Context is client-side: each send rebuilds messages from
+ * [AppViewModel.turns]. Changing [AppViewModel.selectedModelId] never clears turns
+ * (web parity: switch model, keep conversation).
+ */
 data class ChatTurn(
   val id: String = UUID.randomUUID().toString(),
   val role: Role,
   var text: String,
+  /** Model that produced this assistant turn (null for user / system). */
+  val modelId: String? = null,
+  val modelLabel: String? = null,
 ) {
   enum class Role { User, Assistant, System }
 }
@@ -257,19 +265,46 @@ class AppViewModel(
     turns.clear()
   }
 
+  /** Change chat model without clearing transcript (same chat, next model). */
+  fun selectChatModel(modelId: String) {
+    if (models.any { it.id == modelId && it.modality == "chat" }) {
+      selectedModelId = modelId
+    }
+  }
+
+  /** Turns that count as retained context (for UI copy). */
+  val chatContextTurnCount: Int
+    get() =
+      turns.count {
+        it.role == ChatTurn.Role.User ||
+          (it.role == ChatTurn.Role.Assistant && it.text.isNotBlank())
+      }
+
   fun send() {
     val text = draft.trim()
     val modelId = selectedModelId
     if (text.isEmpty() || modelId == null || isBusy) return
-    val model = models.firstOrNull { it.id == modelId }
-    if (model?.spendable == false) {
+    // Resolve from full catalog (not a filtered picker list).
+    val model = models.firstOrNull { it.id == modelId && it.modality == "chat" }
+    if (model == null) {
+      errorMessage = "Pick a chat model first."
+      return
+    }
+    if (model.spendable == false) {
       errorMessage = "Model is not spendable on this plan"
       return
     }
 
     draft = ""
     turns.add(ChatTurn(role = ChatTurn.Role.User, text = text))
-    val assistant = ChatTurn(role = ChatTurn.Role.Assistant, text = "")
+    // Stamp model now so a mid-stream picker change does not relabel this reply.
+    val assistant =
+      ChatTurn(
+        role = ChatTurn.Role.Assistant,
+        text = "",
+        modelId = model.id,
+        modelLabel = model.displayName ?: model.id,
+      )
     turns.add(assistant)
     val assistantIndex = turns.lastIndex
 
@@ -277,13 +312,22 @@ class AppViewModel(
       isBusy = true
       errorMessage = null
       try {
+        // Full transcript → messages. Prior turns may be from other models (intentional).
         val history =
           turns.dropLast(1).mapNotNull { t ->
             when (t.role) {
-              ChatTurn.Role.User -> ControlPlaneChatMessage("user", t.text)
-              ChatTurn.Role.Assistant ->
-                if (t.text.isNotEmpty()) ControlPlaneChatMessage("assistant", t.text) else null
-              ChatTurn.Role.System -> ControlPlaneChatMessage("system", t.text)
+              ChatTurn.Role.User ->
+                if (t.text.isNotBlank()) ControlPlaneChatMessage("user", t.text) else null
+              ChatTurn.Role.Assistant -> {
+                val body = t.text.trim()
+                if (body.isEmpty() || body.startsWith("(cancelled)") || body.startsWith("(error)")) {
+                  null
+                } else {
+                  ControlPlaneChatMessage("assistant", t.text)
+                }
+              }
+              ChatTurn.Role.System ->
+                if (t.text.isNotBlank()) ControlPlaneChatMessage("system", t.text) else null
             }
           }
 
