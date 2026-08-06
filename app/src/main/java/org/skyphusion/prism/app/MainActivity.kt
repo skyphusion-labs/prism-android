@@ -14,6 +14,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import org.skyphusion.prism.app.ui.EnrollScreen
 import org.skyphusion.prism.app.ui.PlaneShell
@@ -31,10 +34,21 @@ class MainActivity : ComponentActivity() {
           val vm: AppViewModel =
             viewModel(factory = AppViewModel.Factory(secrets))
           var showSettings by remember { mutableStateOf(false) }
+          val lifecycleOwner = LocalLifecycleOwner.current
 
           DisposableEffect(Unit) {
             consumeDebugImport(intent, vm)
             onDispose { }
+          }
+
+          // Foreground: plane health + balance (iOS scenePhase .active).
+          DisposableEffect(lifecycleOwner, vm) {
+            val obs =
+              LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) vm.onBecomeActive()
+              }
+            lifecycleOwner.lifecycle.addObserver(obs)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
           }
 
           when {

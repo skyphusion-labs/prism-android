@@ -95,6 +95,20 @@ fun SettingsScreen(
         "Device key: ${if (vm.hasDeviceKey) "stored (EncryptedSharedPreferences)" else "none"}",
         style = MaterialTheme.typography.bodyMedium,
       )
+      Spacer(Modifier.height(4.dp))
+      Text(
+        "Plane health: ${vm.planeHealthLabel}",
+        style = MaterialTheme.typography.bodyMedium,
+        color =
+          when (vm.planeHealthOk) {
+            false -> MaterialTheme.colorScheme.error
+            true -> MaterialTheme.colorScheme.primary
+            null -> MaterialTheme.colorScheme.onSurface
+          },
+      )
+      TextButton(onClick = { vm.probePlaneHealth(); vm.refreshModels() }) {
+        Text("Refresh health + models")
+      }
       vm.balance?.let {
         Spacer(Modifier.height(4.dp))
         Text("Balance: $it", style = MaterialTheme.typography.bodyMedium)

@@ -22,15 +22,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import org.skyphusion.prism.app.AppViewModel
+import org.skyphusion.prism.app.Haptics
 
 @Composable
 fun EnrollScreen(vm: AppViewModel) {
   // Import is primary (operator pcp_ keys); one-time enroll under advanced.
   var showEnroll by remember { mutableStateOf(false) }
   var importKey by remember { mutableStateOf("") }
+  val view = LocalView.current
 
   Column(
     modifier =
@@ -68,6 +71,7 @@ fun EnrollScreen(vm: AppViewModel) {
     Spacer(Modifier.height(12.dp))
     Button(
       onClick = {
+        Haptics.success(view)
         vm.importDeviceKey(importKey)
         importKey = ""
       },

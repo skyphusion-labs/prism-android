@@ -20,13 +20,12 @@ AGPL **Android client** for Prism against the commercial control plane
 
 ## Status
 
-**v0.3.1** -- plane media + Play Billing + iOS 0.6.x polish:
+**v0.3.2** -- tracks iOS 0.6.2 plane product:
 
-- Chat + stream; Image / Video tabs
-- Spend preview (unit/token catalog rate), media elapsed timer, session media history (cap 20)
-- Chat cancel + retry last failed message; video retry same prompt; model switch keeps chat context
-- Play Billing consumables → `POST /v1/store/redeem` (`platform=google_play`; plane **0.4.16+**)
-- Model pickers: spendable filter, Grok video last, Veo / Seedance Fast defaults
+- Chat + stream; Image / Video tabs; Play Billing top-up
+- Spend preview; media history; elapsed timer; chat/video retry; model switch keeps context
+- Plane health probe (bootstrap + Settings + pull-to-refresh); foreground balance refresh
+- Haptics on enroll/import, send, media generate; chat empty state
 
 Create the three in-app products in Play Console (same product ids as App Store). Production
 redeem needs Worker secret `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` on the plane.
