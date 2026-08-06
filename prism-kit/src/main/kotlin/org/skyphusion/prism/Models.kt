@@ -320,6 +320,92 @@ val prismJsonEncode =
 @Serializable
 data class JsonBag(val value: JsonElement)
 
+// --- Playground Worker catalog / auth / chat ---
+
+/**
+ * One catalog entry from `GET /api/models`.
+ * Live playground publishes the id as `id`; older fixtures use `model`.
+ */
+@Serializable
+data class PlaygroundModelEntry(
+  val id: String? = null,
+  val model: String? = null,
+  val label: String? = null,
+  val type: String? = null,
+  val provider: String? = null,
+  val streaming: Boolean? = null,
+  val group: String? = null,
+  val capabilities: List<String>? = null,
+  val priceLabel: String? = null,
+) {
+  val modelId: String get() = model?.takeIf { it.isNotBlank() } ?: id.orEmpty()
+
+  val isSpendable: Boolean
+    get() = !(capabilities.orEmpty().contains("unspendable"))
+
+  /** Map into the plane picker shape so UI can reuse chat/image filters. */
+  fun toControlPlaneModel(): ControlPlaneModel =
+    ControlPlaneModel(
+      id = modelId,
+      displayName = label,
+      modality = type,
+      streaming = streaming,
+      spendable = isSpendable,
+      capabilities = capabilities,
+    )
+}
+
+@Serializable
+data class GatewayStatus(
+  val configured: Boolean? = null,
+  val source: String? = null,
+  @SerialName("gateway_id") val gatewayId: String? = null,
+  @SerialName("cf_aig_token_set") val cfAigTokenSet: Boolean? = null,
+  @SerialName("control_plane_configured") val controlPlaneConfigured: Boolean? = null,
+  @SerialName("control_plane_key_set") val controlPlaneKeySet: Boolean? = null,
+)
+
+/** Envelope of `GET /api/models` (boot probe; no session required). */
+@Serializable
+data class PlaygroundModelsResponse(
+  val models: List<PlaygroundModelEntry> = emptyList(),
+  val mode: String? = null,
+  val authenticated: Boolean? = null,
+  val user: String? = null,
+  val username: String? = null,
+  val gateway: GatewayStatus? = null,
+)
+
+@Serializable
+data class AuthUser(val username: String)
+
+@Serializable
+data class AuthSuccess(
+  val user: AuthUser? = null,
+  val ok: Boolean? = null,
+  val error: String? = null,
+)
+
+@Serializable
+data class PlaygroundChatRequest(
+  val model: String,
+  @SerialName("user_input") val userInput: String,
+  @SerialName("system_prompt") val systemPrompt: String? = null,
+  @SerialName("conversation_id") val conversationId: String? = null,
+  @SerialName("use_docs") val useDocs: Boolean? = null,
+  @SerialName("use_web_search") val useWebSearch: Boolean? = null,
+)
+
+@Serializable
+data class PlaygroundChatResponse(
+  val output: String? = null,
+  @SerialName("conversation_id") val conversationId: String? = null,
+  val model: String? = null,
+  @SerialName("tokens_in") val tokensIn: Int? = null,
+  @SerialName("tokens_out") val tokensOut: Int? = null,
+  val error: String? = null,
+)
+
 // --- Conversation compact (playground Worker v0.175.7) ---
 
 /**

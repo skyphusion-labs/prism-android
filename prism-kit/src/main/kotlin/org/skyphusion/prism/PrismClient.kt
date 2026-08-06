@@ -3,6 +3,8 @@ package org.skyphusion.prism
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.HttpUrl
@@ -15,10 +17,6 @@ import okhttp3.OkHttpClient
  * Public mode (`AUTH_MODE=public`) uses an httpOnly session cookie
  * (`__Host-prism_session`). This client keeps an in-memory cookie jar.
  * Access mode (self-host behind CF Access) can pass headers via [defaultHeaders].
- *
- * Compact API (Worker v0.175.7):
- * - `POST /api/conversations/:id/compact`
- * - `DELETE /api/conversations/:id/compact`
  */
 class PrismClient(
   val http: HttpJson,
@@ -30,7 +28,6 @@ class PrismClient(
     /** Cookie name set by the playground Worker (`src/session.ts`). */
     const val SESSION_COOKIE_NAME: String = "__Host-prism_session"
 
-    /** Build a client with a shared [MemoryCookieJar] (production + tests). */
     fun create(
       baseUrl: String = PRODUCTION_BASE_URL,
       cookieJar: MemoryCookieJar = MemoryCookieJar(),
@@ -49,16 +46,13 @@ class PrismClient(
       )
     }
 
-    /** Percent-encode a path segment (conversation ids are mostly unreserved). */
     fun encodePathSegment(segment: String): String =
       URLEncoder.encode(segment, StandardCharsets.UTF_8.name())
         .replace("+", "%20")
   }
 
-  /** Current session token from the jar (after login or restore), if any. */
   fun exportSessionToken(): String? = cookieJar.cookieValue(SESSION_COOKIE_NAME)
 
-  /** Re-inject a previously stored session token into the jar. */
   fun restoreSessionToken(token: String): Boolean {
     val trimmed = token.trim()
     if (trimmed.isEmpty()) return false
@@ -75,17 +69,129 @@ class PrismClient(
     return true
   }
 
-  /** Drop session cookies for this base URL. */
   fun clearSession() {
     cookieJar.clear()
   }
 
-  // --- Conversation compact (playground v0.175.7) ---
+  // --- Health / catalog ---
+
+  fun health(): ControlPlaneHealth {
+    val (body, _) =
+      http.send<Unit?, ControlPlaneHealth>(
+        "GET",
+        "/health",
+        body = null,
+        headers = defaultHeaders,
+      )
+    return body
+  }
+
+  /** Boot probe: models + auth mode + session flag (no session required). */
+  fun models(): PlaygroundModelsResponse {
+    val (body, _) =
+      http.send<Unit?, PlaygroundModelsResponse>(
+        "GET",
+        "/api/models",
+        body = null,
+        headers = defaultHeaders,
+      )
+    return body
+  }
+
+  // --- Auth (public mode) ---
+
+  fun signup(username: String, password: String): AuthSuccess {
+    val (res, _) =
+      http.send<AuthCredentials, AuthSuccess>(
+        "POST",
+        "/api/auth/signup",
+        body = AuthCredentials(username, password),
+        headers = defaultHeaders,
+        okStatuses = setOf(200, 201),
+      )
+    res.error?.takeIf { it.isNotBlank() }?.let { throw PrismError.Server(it) }
+    return res
+  }
+
+  fun login(username: String, password: String): AuthSuccess {
+    val (res, _) =
+      http.send<AuthCredentials, AuthSuccess>(
+        "POST",
+        "/api/auth/login",
+        body = AuthCredentials(username, password),
+        headers = defaultHeaders,
+      )
+    res.error?.takeIf { it.isNotBlank() }?.let { throw PrismError.Server(it) }
+    return res
+  }
+
+  fun logout() {
+    http.send<Unit?, AuthLogoutResponse>(
+      "POST",
+      "/api/auth/logout",
+      body = null,
+      headers = defaultHeaders,
+    )
+    clearSession()
+  }
+
+  // --- Chat ---
+
+  fun chat(body: PlaygroundChatRequest): PlaygroundChatResponse {
+    val (res, _) =
+      http.send<PlaygroundChatRequest, PlaygroundChatResponse>(
+        "POST",
+        "/api/chat",
+        body = body,
+        headers = defaultHeaders,
+      )
+    res.error?.takeIf { it.isNotBlank() }?.let { throw PrismError.Server(it) }
+    return res
+  }
 
   /**
-   * Summarize older turns on the Worker; next chat injects the summary instead of full history.
-   * UI transcript is unchanged.
+   * Streaming chat via SSE (`POST /api/chat/stream`).
+   * Buffers the full body then parses (reliable for tests and mobile).
    */
+  fun chatStream(body: PlaygroundChatRequest): List<ChatStreamEvent> {
+    val json = prismJsonEncode.encodeToString(body)
+    val headers = defaultHeaders + mapOf("Accept" to "text/event-stream")
+    val res =
+      http.execute(
+        "POST",
+        "/api/chat/stream",
+        bodyJson = json,
+        headers = headers,
+      )
+    val text = res.body?.string().orEmpty()
+    res.close()
+    return SseParser.parseChatEvents(text)
+  }
+
+  fun chatStreamText(body: PlaygroundChatRequest): Pair<String, PlaygroundChatResponse?> {
+    val events = chatStream(body)
+    val parts = StringBuilder()
+    var final: PlaygroundChatResponse? = null
+    for (e in events) {
+      when (e) {
+        is ChatStreamEvent.Delta -> parts.append(e.text)
+        is ChatStreamEvent.Done -> {
+          if (!e.fullText.isNullOrEmpty()) {
+            final = PlaygroundChatResponse(output = e.fullText)
+          }
+        }
+        is ChatStreamEvent.Error -> throw PrismError.Server(e.message)
+        is ChatStreamEvent.Unknown -> Unit
+      }
+    }
+    val joined = parts.toString()
+    val out = final?.output
+    if (!out.isNullOrEmpty()) return (joined.ifEmpty { out }) to final
+    return joined to final
+  }
+
+  // --- Conversation compact (playground v0.175.7) ---
+
   fun compactConversation(
     id: String,
     keepRecent: Int = ConversationCompact.DEFAULT_KEEP_RECENT,
@@ -104,7 +210,6 @@ class PrismClient(
     return res
   }
 
-  /** Clear compact state so the next turn uses full raw history again. */
   fun clearConversationCompact(id: String): ConversationCompactClearResponse {
     val encoded = encodePathSegment(id)
     val (res, _) =
@@ -119,10 +224,7 @@ class PrismClient(
   }
 }
 
-/**
- * Thread-safe in-memory [CookieJar] for playground session cookies.
- * Also exposes get/set helpers for session restore.
- */
+/** Thread-safe in-memory [CookieJar] for playground session cookies. */
 class MemoryCookieJar : CookieJar {
   private val store = ConcurrentHashMap<String, Cookie>()
 
@@ -148,3 +250,14 @@ class MemoryCookieJar : CookieJar {
 
   private fun key(c: Cookie): String = "${c.name}|${c.domain}|${c.path}"
 }
+
+@Serializable
+internal data class AuthCredentials(
+  val username: String,
+  val password: String,
+)
+
+@Serializable
+internal data class AuthLogoutResponse(
+  val ok: Boolean? = null,
+)

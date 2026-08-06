@@ -8,8 +8,9 @@ Guidance for agents working in this repository.
 [prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane). History / RAG /
 artifacts remain on [prism](https://github.com/skyphusion-labs/prism) (not yet wired in the app).
 
-**v0.4.2:** More hub (Chat/Image/Video/More) + mic STT record. Prior 0.4.1: photo
-picker / save / Speak. Grok video **0.4.14+**; Play redeem **0.4.16+**.
+**v0.5.0:** dual-backend (Control plane default; Playground behind Developer).
+Kit `PrismClient` auth + chat/stream; app login + backend switch. Prior 0.4.x:
+More hub, mic STT, photos/Speak. Grok video **0.4.14+**; Play redeem **0.4.16+**.
 
 ## Related
 
@@ -23,10 +24,11 @@ picker / save / Speak. Grok video **0.4.14+**; Play redeem **0.4.16+**.
 ## Layout
 
 - `prism-kit` -- JVM (OkHttp, kotlinx.serialization, coroutines)
-  - `ControlPlaneClient` (chat SSE, image, video, speech, STT, music), `PrismClient`,
-    `ConversationCompact`, `HttpJson`, `SseParser`, `Models`, `SecretStore`
+  - `ControlPlaneClient` (chat SSE, image, video, speech, STT, music)
+  - `PrismClient` (playground auth, models, chat/stream, compact)
+  - `ConversationCompact`, `HttpJson`, `SseParser`, `Models`, `SecretStore`
 - `app` -- Android application (Compose Material3)
-  - enroll / Chat·Image·Video·Audio·Music tabs / sessions / settings
+  - enroll or playground login / Chat·Image·Video·More / sessions / settings
 
 ## Commands
 

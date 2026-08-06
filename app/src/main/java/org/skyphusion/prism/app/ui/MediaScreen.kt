@@ -127,6 +127,15 @@ fun MediaScreen(
         OfflineBanner()
       }
 
+      if (!vm.canUseMediaDoors) {
+        Text(
+          "Image and video doors are control-plane only. Switch backend in Settings → Developer, or enroll a pcp_ key.",
+          style = MaterialTheme.typography.bodyMedium,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return@Column
+      }
+
       ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
         OutlinedTextField(
           value =
