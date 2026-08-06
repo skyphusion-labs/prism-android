@@ -26,6 +26,7 @@ import org.skyphusion.prism.ControlPlaneClient
 import org.skyphusion.prism.ControlPlaneModel
 import org.skyphusion.prism.ConversationCompact
 import org.skyphusion.prism.ConversationCompactState
+import org.skyphusion.prism.PrismClient
 import org.skyphusion.prism.PrismError
 import org.skyphusion.prism.SecretStore
 import org.skyphusion.prism.SecretStoreKeys
@@ -68,6 +69,17 @@ class AppViewModel(
       baseUrl = secrets.get(SecretStoreKeys.CONTROL_PLANE_BASE_URL) ?: baseUrl,
       clientKey = secrets.get(SecretStoreKeys.CONTROL_PLANE_DEVICE_KEY),
     )
+
+  /** Playground Worker client (compact API when [playgroundConversationId] is set). */
+  private var playground: PrismClient =
+    PrismClient.create(
+      baseUrl =
+        secrets.get(SecretStoreKeys.PLAYGROUND_BASE_URL) ?: PrismClient.PRODUCTION_BASE_URL,
+    ).also { pc ->
+      secrets.get(SecretStoreKeys.PLAYGROUND_SESSION_COOKIE)?.let { token ->
+        pc.restoreSessionToken(token)
+      }
+    }
 
   var enrollmentToken by mutableStateOf("")
   var deviceLabel by mutableStateOf(secrets.get(SecretStoreKeys.DEVICE_LABEL) ?: "Android")
@@ -144,7 +156,17 @@ class AppViewModel(
   var canRetryLastChat by mutableStateOf(false)
     private set
 
-  /** Client-side compact (plane). UI transcript stays full; wire history shrinks. */
+  /**
+   * Playground conversation id when history is server-side (Worker).
+   * Null in control-plane-only mode (client owns the transcript).
+   */
+  var playgroundConversationId by mutableStateOf<String?>(null)
+    private set
+
+  /**
+   * Compact state: plane client-side summary, or playground Worker state after compact.
+   * UI transcript stays full; wire / server context shrinks.
+   */
   var compactState by mutableStateOf<ConversationCompactState?>(null)
     private set
   var compactBusy by mutableStateOf(false)
@@ -485,6 +507,7 @@ class AppViewModel(
     balance = null
     turns.clear()
     compactState = null
+    playgroundConversationId = null
     clearMediaResults()
     banner = "Control plane · re-enroll required"
   }
@@ -556,6 +579,7 @@ class AppViewModel(
   fun clearChat() {
     turns.clear()
     compactState = null
+    // playgroundConversationId is server-owned; leave it until bindPlaygroundConversation(null).
     clearChatFailure()
   }
 
@@ -593,14 +617,35 @@ class AppViewModel(
     return pairs
   }
 
-  /** Compact older turns via a plane chat summary (playground API not wired yet). */
+  /**
+   * Bind a playground conversation (or clear). When set, Compact/Expand hit the
+   * Worker `.../compact` endpoints; when null, plane uses client-side summary.
+   */
+  fun bindPlaygroundConversation(
+    id: String?,
+    compact: ConversationCompactState? = null,
+  ) {
+    playgroundConversationId = id?.takeIf { it.isNotBlank() }
+    compactState = compact
+  }
+
+  /**
+   * Compact older turns.
+   * - Playground: `POST /api/conversations/:id/compact` when [playgroundConversationId] is set.
+   * - Plane: local summary via chat completion (UI transcript unchanged).
+   */
   fun compactConversation() {
     if (!canCompactConversation) return
     viewModelScope.launch {
       compactBusy = true
       errorMessage = null
       try {
-        performPlaneCompact()
+        val convId = playgroundConversationId
+        if (convId != null) {
+          performPlaygroundCompact(convId)
+        } else {
+          performPlaneCompact()
+        }
       } catch (e: Exception) {
         if (e is kotlinx.coroutines.CancellationException) throw e
         handleAuthError(e)
@@ -611,12 +656,51 @@ class AppViewModel(
     }
   }
 
-  /** Clear compact so the next send uses full history again. */
+  /** Clear compact so the next send uses full history again (Expand). */
   fun expandConversation() {
     if (!canExpandConversation) return
-    compactState = null
-    banner = "Expanded -- next turn uses full history"
-    errorMessage = null
+    val convId = playgroundConversationId
+    if (convId == null) {
+      compactState = null
+      banner = "Expanded -- next turn uses full history"
+      errorMessage = null
+      return
+    }
+    viewModelScope.launch {
+      compactBusy = true
+      errorMessage = null
+      try {
+        withContext(Dispatchers.IO) {
+          playground.clearConversationCompact(convId)
+        }
+        compactState = null
+        banner = "Expanded -- next turn uses full history"
+        persistPlaygroundSession()
+      } catch (e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
+        errorMessage = e.toUserMessage()
+      } finally {
+        compactBusy = false
+      }
+    }
+  }
+
+  private suspend fun performPlaygroundCompact(conversationId: String) {
+    val modelId = selectedModelId ?: selectedChatModel?.id
+    val res =
+      withContext(Dispatchers.IO) {
+        playground.compactConversation(
+          id = conversationId,
+          keepRecent = ConversationCompact.DEFAULT_KEEP_RECENT,
+          model = modelId,
+        )
+      }
+    compactState = res.compact
+    val n = res.turnsSummarized ?: 0
+    val k = res.turnsKeptRaw ?: 0
+    banner =
+      "Compacted $n turn${if (n == 1) "" else "s"}; keeping $k recent raw"
+    persistPlaygroundSession()
   }
 
   private suspend fun performPlaneCompact() {
@@ -673,6 +757,11 @@ class AppViewModel(
     banner =
       "Compacted $n turn${if (n == 1) "" else "s"}; keeping $k recent raw"
     refreshAccount()
+  }
+
+  private fun persistPlaygroundSession() {
+    val token = playground.exportSessionToken()
+    secrets.set(SecretStoreKeys.PLAYGROUND_SESSION_COOKIE, token)
   }
 
   fun retryLastFailedChat() {

@@ -319,7 +319,10 @@ fun OfflineBanner(modifier: Modifier = Modifier) {
   )
 }
 
-/** Compact / expand controls (plane client-side summary; UI transcript unchanged). */
+/**
+ * Compact / expand controls. UI transcript stays full; model context shrinks.
+ * Plane: client-side summary. Playground: Worker compact when conversation_id is bound.
+ */
 @Composable
 private fun CompactBar(vm: AppViewModel, modifier: Modifier = Modifier) {
   val view = LocalView.current
