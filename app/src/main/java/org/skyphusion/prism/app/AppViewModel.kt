@@ -81,6 +81,21 @@ class AppViewModel(
   var errorMessage by mutableStateOf<String?>(null)
   var banner by mutableStateOf("Control plane · $baseUrl")
 
+  /** Unauthenticated `GET /health` probe (`null` = not checked yet). */
+  var planeHealthOk by mutableStateOf<Boolean?>(null)
+    private set
+  var planeHealthService by mutableStateOf<String?>(null)
+    private set
+
+  val planeHealthLabel: String
+    get() =
+      when (planeHealthOk) {
+        null -> "not checked"
+        true ->
+          planeHealthService?.takeIf { it.isNotBlank() }?.let { "ok · $it" } ?: "ok"
+        false -> "unreachable"
+      }
+
   // Image / video
   var imagePrompt by mutableStateOf("")
   var imageImageRef by mutableStateOf("")
@@ -162,9 +177,39 @@ class AppViewModel(
   val chatSpendPreview: String? get() = spendPreview(selectedChatModel)
 
   init {
+    probePlaneHealth()
     if (hasDeviceKey) {
       refreshAccount()
       refreshModels()
+    }
+  }
+
+  /** Foreground resume: health + balance when enrolled (iOS onBecomeActive). */
+  fun onBecomeActive() {
+    probePlaneHealth()
+    if (hasDeviceKey) refreshAccount()
+  }
+
+  /** Unauthenticated `GET /health` on the control plane origin. */
+  fun probePlaneHealth() {
+    viewModelScope.launch {
+      try {
+        val h =
+          withContext(Dispatchers.IO) {
+            client.health()
+          }
+        planeHealthOk = h.ok
+        planeHealthService = h.service
+        if (!h.ok && models.isEmpty()) {
+          banner = "Control plane · health not ok"
+        }
+      } catch (_: Exception) {
+        planeHealthOk = false
+        planeHealthService = null
+        if (models.isEmpty()) {
+          banner = "Control plane · unreachable"
+        }
+      }
     }
   }
 
@@ -199,6 +244,7 @@ class AppViewModel(
         hasDeviceKey = true
         enrollmentToken = ""
         banner = "Enrolled · ${res.clientId}"
+        probePlaneHealth()
         refreshAccount()
         refreshModels()
       } catch (e: Exception) {
@@ -225,6 +271,7 @@ class AppViewModel(
     hasDeviceKey = true
     errorMessage = null
     banner = "Device key imported"
+    probePlaneHealth()
     refreshAccount()
     refreshModels()
   }

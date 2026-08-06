@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -35,6 +36,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -43,9 +45,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import org.skyphusion.prism.app.AppViewModel
 import org.skyphusion.prism.app.ChatTurn
+import org.skyphusion.prism.app.Haptics
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -54,10 +58,16 @@ fun ChatScreen(
   onOpenSettings: () -> Unit,
 ) {
   val listState = rememberLazyListState()
+  val view = LocalView.current
+  var refreshing by remember { mutableStateOf(false) }
   LaunchedEffect(vm.turns.size, vm.turns.lastOrNull()?.text) {
     if (vm.turns.isNotEmpty()) {
       listState.animateScrollToItem(vm.turns.lastIndex)
     }
+  }
+  // Clear pull indicator when busy ends
+  LaunchedEffect(vm.isBusy) {
+    if (!vm.isBusy) refreshing = false
   }
 
   Scaffold(
@@ -66,16 +76,37 @@ fun ChatScreen(
         title = {
           Column {
             Text("Prism")
-            vm.balance?.let {
-              Text(it, style = MaterialTheme.typography.labelSmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              vm.balance?.let {
+                Text(it, style = MaterialTheme.typography.labelSmall)
+              }
+              if (vm.planeHealthOk == false) {
+                Text(
+                  "· plane down",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = MaterialTheme.colorScheme.error,
+                )
+              }
             }
           }
         },
         actions = {
-          IconButton(onClick = { vm.refreshModels() }, enabled = !vm.isBusy) {
+          IconButton(
+            onClick = {
+              Haptics.light(view)
+              vm.refreshModels()
+            },
+            enabled = !vm.isBusy,
+          ) {
             Icon(Icons.Default.Refresh, contentDescription = "Refresh models")
           }
-          IconButton(onClick = { vm.clearChat() }, enabled = vm.turns.isNotEmpty()) {
+          IconButton(
+            onClick = {
+              Haptics.light(view)
+              vm.clearChat()
+            },
+            enabled = vm.turns.isNotEmpty(),
+          ) {
             Icon(Icons.Default.Delete, contentDescription = "Clear chat")
           }
           IconButton(onClick = onOpenSettings) {
@@ -111,17 +142,31 @@ fun ChatScreen(
         Switch(checked = vm.useStream, onCheckedChange = { vm.useStream = it })
       }
 
-      LazyColumn(
-        state = listState,
-        modifier =
-          Modifier
-            .weight(1f)
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+      PullToRefreshBox(
+        isRefreshing = refreshing,
+        onRefresh = {
+          refreshing = true
+          vm.probePlaneHealth()
+          vm.refreshModels()
+        },
+        modifier = Modifier.weight(1f).fillMaxWidth(),
       ) {
-        items(vm.turns, key = { it.id }) { turn ->
-          TurnBubble(turn)
+        LazyColumn(
+          state = listState,
+          modifier =
+            Modifier
+              .fillMaxSize()
+              .padding(horizontal = 12.dp),
+          verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          if (vm.turns.isEmpty()) {
+            item {
+              ChatEmptyState(vm = vm, modifier = Modifier.padding(top = 48.dp))
+            }
+          }
+          items(vm.turns, key = { it.id }) { turn ->
+            TurnBubble(turn)
+          }
         }
       }
 
@@ -133,7 +178,12 @@ fun ChatScreen(
             style = MaterialTheme.typography.bodySmall,
           )
           if (vm.canRetryLastChat && !vm.isBusy) {
-            TextButton(onClick = { vm.retryLastFailedChat() }) {
+            TextButton(
+              onClick = {
+                Haptics.light(view)
+                vm.retryLastFailedChat()
+              },
+            ) {
               Text("Retry last message")
             }
           }
@@ -161,13 +211,52 @@ fun ChatScreen(
           }
         } else {
           IconButton(
-            onClick = { vm.send() },
+            onClick = {
+              Haptics.light(view)
+              vm.send()
+            },
             enabled = vm.draft.isNotBlank() && vm.selectedModelId != null,
           ) {
             Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
           }
         }
       }
+    }
+  }
+}
+
+@Composable
+private fun ChatEmptyState(vm: AppViewModel, modifier: Modifier = Modifier) {
+  Column(
+    modifier = modifier.fillMaxWidth().padding(horizontal = 24.dp),
+    horizontalAlignment = Alignment.CenterHorizontally,
+    verticalArrangement = Arrangement.spacedBy(10.dp),
+  ) {
+    Icon(
+      Icons.AutoMirrored.Filled.Chat,
+      contentDescription = null,
+      tint = MaterialTheme.colorScheme.onSurfaceVariant,
+      modifier = Modifier.height(40.dp),
+    )
+    Text("Start a conversation", style = MaterialTheme.typography.titleMedium)
+    Text(
+      "Messages stay on this device. Switch models anytime; context is kept until Clear chat.",
+      style = MaterialTheme.typography.bodySmall,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    vm.selectedChatModel?.let { m ->
+      Text(
+        "Using ${m.displayName ?: m.id}",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+    }
+    if (vm.planeHealthOk == false) {
+      Text(
+        "Plane health: unreachable. Pull to refresh or check Settings.",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.error,
+      )
     }
   }
 }

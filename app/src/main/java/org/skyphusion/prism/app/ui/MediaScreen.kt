@@ -40,12 +40,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import org.skyphusion.prism.app.AppViewModel
+import org.skyphusion.prism.app.Haptics
 import org.skyphusion.prism.app.MediaKind
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -56,6 +58,7 @@ fun MediaScreen(
   onOpenSettings: () -> Unit,
 ) {
   val context = LocalContext.current
+  val view = LocalView.current
   val models = if (kind == MediaKind.Image) vm.imageModels else vm.videoModels
   val selectedId =
     if (kind == MediaKind.Image) vm.selectedImageModelId else vm.selectedVideoModelId
@@ -211,6 +214,7 @@ fun MediaScreen(
       } else {
         Button(
           onClick = {
+            Haptics.light(view)
             if (kind == MediaKind.Image) vm.generateImage() else vm.generateVideo()
           },
           enabled = models.isNotEmpty(),
@@ -222,7 +226,10 @@ fun MediaScreen(
           (vm.videoPrompt.isNotBlank() || vm.videoImageRef.isNotBlank())
         ) {
           TextButton(
-            onClick = { vm.retryLastVideo() },
+            onClick = {
+              Haptics.light(view)
+              vm.retryLastVideo()
+            },
             modifier = Modifier.fillMaxWidth(),
           ) {
             Text("Retry video (same prompt)")
