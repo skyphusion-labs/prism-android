@@ -8,7 +8,8 @@ Guidance for agents working in this repository.
 [prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane). History / RAG /
 artifacts remain on [prism](https://github.com/skyphusion-labs/prism) (not yet wired in the app).
 
-**v0.1.0:** kit client + Compose shell (enroll, models, chat stream, EncryptedSharedPreferences).
+**v0.2.0:** kit client + Compose shell with **Chat / Image / Video** tabs (plane parity with
+iOS media surface). EncryptedSharedPreferences for `pcp_`. Grok video needs plane **0.4.14+**.
 
 ## Related
 
@@ -16,15 +17,15 @@ artifacts remain on [prism](https://github.com/skyphusion-labs/prism) (not yet w
 | --- | --- |
 | [prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane) | Metered inference -- primary target |
 | [prism](https://github.com/skyphusion-labs/prism) | Playground Worker |
-| [prism-ios](https://github.com/skyphusion-labs/prism-ios) | Sibling Swift kit + shell |
+| [prism-ios](https://github.com/skyphusion-labs/prism-ios) | Sibling Swift kit + shell (feature lead) |
 | [prism-mcp](https://github.com/skyphusion-labs/prism-mcp) | Agent MCP door |
 
 ## Layout
 
 - `prism-kit` -- JVM (OkHttp, kotlinx.serialization, coroutines)
-  - `ControlPlaneClient`, `HttpJson`, `SseParser`, `Models`, `SecretStore` / `MemorySecretStore`
+  - `ControlPlaneClient` (chat SSE, image, video), `HttpJson`, `SseParser`, `Models`, `SecretStore`
 - `app` -- Android application (Compose Material3)
-  - `EncryptedPrefsSecretStore`, `AppViewModel`, enroll / chat / settings screens
+  - `EncryptedPrefsSecretStore`, `AppViewModel`, enroll / PlaneShell tabs / media / settings
 
 ## Commands
 

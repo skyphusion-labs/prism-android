@@ -21,10 +21,15 @@ import kotlinx.serialization.encodeToString
 class ControlPlaneClient(
   val http: HttpJson,
   clientKey: String? = null,
+  /** Longer-timeout client for image/video (optional; defaults from [http] base URL). */
+  nonChatHttp: HttpJson? = null,
 ) {
   /** Device key (`pcp_...`). Null until enroll or inject. */
   var clientKey: String? = clientKey
     private set
+
+  private val mediaHttp: HttpJson =
+    nonChatHttp ?: HttpJson(baseUrl = http.root, client = HttpJson.nonChatClient())
 
   constructor(
     baseUrl: String = PRODUCTION_BASE_URL,
@@ -220,7 +225,53 @@ class ControlPlaneClient(
     return sb.toString()
   }
 
+  // --- Image / video (unit-priced) ---
+
+  /** `POST /v1/images/generations` -- `data[].b64_json` and/or `data[].url`. */
+  fun generateImage(request: ImageGenerationRequest): ImageGenerationResponse {
+    val key = requireKey()
+    val (body, _) =
+      mediaHttp.send<ImageGenerationRequest, ImageGenerationResponse>(
+        "POST",
+        "/v1/images/generations",
+        body = request,
+        bearer = key,
+      )
+    body.error?.let { err ->
+      throw PrismError.Server(err.message ?: err.code ?: "image generation error")
+    }
+    if (body.firstBase64 == null && body.firstDisplayUrl == null) {
+      throw PrismError.Server("Empty image payload")
+    }
+    return body
+  }
+
+  fun generateImage(model: String, prompt: String, image: String? = null): ImageGenerationResponse =
+    generateImage(ImageGenerationRequest(model = model, prompt = prompt, image = image))
+
+  /** `POST /v1/videos/generations` -- `video` is a URL or inline asset. */
+  fun generateVideo(request: VideoGenerationRequest): VideoGenerationResponse {
+    val key = requireKey()
+    val (body, _) =
+      mediaHttp.send<VideoGenerationRequest, VideoGenerationResponse>(
+        "POST",
+        "/v1/videos/generations",
+        body = request,
+        bearer = key,
+      )
+    body.error?.let { err ->
+      throw PrismError.Server(err.message ?: err.code ?: "video generation error")
+    }
+    if (body.video.isNullOrEmpty()) throw PrismError.Server("Empty video payload")
+    return body
+  }
+
+  fun generateVideo(model: String, prompt: String? = null, image: String? = null): VideoGenerationResponse =
+    generateVideo(VideoGenerationRequest(model = model, prompt = prompt, image = image))
+
   companion object {
     const val PRODUCTION_BASE_URL: String = "https://play-proxy.skyphusion.org"
+    /** Client wait above plane non-chat ceiling (180s); matches iOS. */
+    const val NON_CHAT_TIMEOUT_SECONDS: Long = 200
   }
 }
