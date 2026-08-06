@@ -67,15 +67,19 @@ class AppViewModel(
 
   var models = mutableStateListOf<ControlPlaneModel>()
     private set
-  var selectedModelId by mutableStateOf<String?>(null)
-  var selectedImageModelId by mutableStateOf<String?>(null)
-  var selectedVideoModelId by mutableStateOf<String?>(null)
+  var selectedModelId by mutableStateOf(secrets.get(SecretStoreKeys.SELECTED_CHAT_MODEL))
+  var selectedImageModelId by mutableStateOf(secrets.get(SecretStoreKeys.SELECTED_IMAGE_MODEL))
+  var selectedVideoModelId by mutableStateOf(secrets.get(SecretStoreKeys.SELECTED_VIDEO_MODEL))
   var balance by mutableStateOf<String?>(null)
   var turns = mutableStateListOf<ChatTurn>()
     private set
   var draft by mutableStateOf("")
-  var useStream by mutableStateOf(true)
-  var hideUnspendable by mutableStateOf(true)
+  var useStream by mutableStateOf(
+    secrets.get(SecretStoreKeys.USE_STREAM)?.let { it != "0" && !it.equals("false", true) } ?: true,
+  )
+  var hideUnspendable by mutableStateOf(
+    secrets.get(SecretStoreKeys.HIDE_UNSPENDABLE)?.let { it != "0" && !it.equals("false", true) } ?: true,
+  )
   var isBusy by mutableStateOf(false)
     private set
   var errorMessage by mutableStateOf<String?>(null)
@@ -217,6 +221,46 @@ class AppViewModel(
   fun selectChatModel(modelId: String) {
     if (chatModels.none { it.id == modelId }) return
     selectedModelId = modelId
+    persistUIPrefs()
+  }
+
+  fun updateUseStream(on: Boolean) {
+    useStream = on
+    persistUIPrefs()
+  }
+
+  fun updateHideUnspendable(on: Boolean) {
+    hideUnspendable = on
+    persistUIPrefs()
+  }
+
+  fun persistUIPrefs() {
+    secrets.set(SecretStoreKeys.SELECTED_CHAT_MODEL, selectedModelId)
+    secrets.set(SecretStoreKeys.SELECTED_IMAGE_MODEL, selectedImageModelId)
+    secrets.set(SecretStoreKeys.SELECTED_VIDEO_MODEL, selectedVideoModelId)
+    secrets.set(SecretStoreKeys.USE_STREAM, if (useStream) "1" else "0")
+    secrets.set(SecretStoreKeys.HIDE_UNSPENDABLE, if (hideUnspendable) "1" else "0")
+  }
+
+  /** Plain-text transcript for share (iOS chatTranscriptText). */
+  fun chatTranscriptText(): String =
+    turns
+      .mapNotNull { t ->
+        val body = t.text.trim()
+        if (body.isEmpty() || body == "(cancelled)") return@mapNotNull null
+        when (t.role) {
+          ChatTurn.Role.User -> "You: $body"
+          ChatTurn.Role.Assistant -> {
+            val who = t.modelId ?: "Prism"
+            "$who: $body"
+          }
+          ChatTurn.Role.System -> "System: $body"
+        }
+      }.joinToString("\n\n")
+
+  fun retryLastImage() {
+    if (imagePrompt.trim().isEmpty()) return
+    generateImage()
   }
 
   fun enroll() {
@@ -313,11 +357,10 @@ class AppViewModel(
   }
 
   private fun pickDefaults() {
-    if (selectedModelId == null || models.none { it.id == selectedModelId }) {
+    if (selectedModelId == null || chatModels.none { it.id == selectedModelId }) {
       selectedModelId =
-        models.firstOrNull { it.spendable != false && it.modality == "chat" }?.id
-          ?: models.firstOrNull { it.spendable != false }?.id
-          ?: models.firstOrNull()?.id
+        chatModels.firstOrNull { it.spendable != false }?.id
+          ?: chatModels.firstOrNull()?.id
     }
     if (selectedImageModelId == null || imageModels.none { it.id == selectedImageModelId }) {
       selectedImageModelId =
@@ -335,6 +378,7 @@ class AppViewModel(
           }?.id
           ?: videoModels.firstOrNull()?.id
     }
+    persistUIPrefs()
   }
 
   fun refreshAccount() {

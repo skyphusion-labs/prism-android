@@ -20,12 +20,12 @@ AGPL **Android client** for Prism against the commercial control plane
 
 ## Status
 
-**v0.3.2** -- tracks iOS 0.6.2 plane product:
+**v0.3.3** -- tracks iOS 0.6.3:
 
-- Chat + stream; Image / Video tabs; Play Billing top-up
-- Spend preview; media history; elapsed timer; chat/video retry; model switch keeps context
-- Plane health probe (bootstrap + Settings + pull-to-refresh); foreground balance refresh
-- Haptics on enroll/import, send, media generate; chat empty state
+- Persist chat/image/video model + stream + hide-unspendable prefs
+- Streaming “Thinking…” indicator; share transcript; image retry
+- About links (site, privacy, playground, status, support)
+- Brand accent theme; prior: health, haptics, empty state, media tabs, Play Billing
 
 Create the three in-app products in Play Console (same product ids as App Store). Production
 redeem needs Worker secret `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` on the plane.

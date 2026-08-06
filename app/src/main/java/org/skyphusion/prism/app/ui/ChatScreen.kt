@@ -18,10 +18,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Send
+import android.content.Intent
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -45,6 +49,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import org.skyphusion.prism.app.AppViewModel
@@ -59,6 +64,7 @@ fun ChatScreen(
 ) {
   val listState = rememberLazyListState()
   val view = LocalView.current
+  val context = LocalContext.current
   var refreshing by remember { mutableStateOf(false) }
   LaunchedEffect(vm.turns.size, vm.turns.lastOrNull()?.text) {
     if (vm.turns.isNotEmpty()) {
@@ -100,6 +106,24 @@ fun ChatScreen(
           ) {
             Icon(Icons.Default.Refresh, contentDescription = "Refresh models")
           }
+          if (vm.turns.isNotEmpty()) {
+            IconButton(
+              onClick = {
+                val text = vm.chatTranscriptText()
+                if (text.isNotEmpty()) {
+                  Haptics.light(view)
+                  val send =
+                    Intent(Intent.ACTION_SEND).apply {
+                      type = "text/plain"
+                      putExtra(Intent.EXTRA_TEXT, text)
+                    }
+                  context.startActivity(Intent.createChooser(send, "Share transcript"))
+                }
+              },
+            ) {
+              Icon(Icons.Default.Share, contentDescription = "Share transcript")
+            }
+          }
           IconButton(
             onClick = {
               Haptics.light(view)
@@ -139,7 +163,7 @@ fun ChatScreen(
       ) {
         Text("Stream", style = MaterialTheme.typography.labelLarge)
         Spacer(modifier = Modifier.weight(1f))
-        Switch(checked = vm.useStream, onCheckedChange = { vm.useStream = it })
+        Switch(checked = vm.useStream, onCheckedChange = { vm.updateUseStream(it) })
       }
 
       PullToRefreshBox(
@@ -165,7 +189,12 @@ fun ChatScreen(
             }
           }
           items(vm.turns, key = { it.id }) { turn ->
-            TurnBubble(turn)
+            val streaming =
+              vm.isBusy &&
+                turn.role == ChatTurn.Role.Assistant &&
+                turn.id == vm.turns.lastOrNull()?.id &&
+                turn.text.isEmpty()
+            TurnBubble(turn, isStreaming = streaming)
           }
         }
       }
@@ -322,36 +351,65 @@ private fun ModelPicker(vm: AppViewModel, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun TurnBubble(turn: ChatTurn) {
+private fun TurnBubble(turn: ChatTurn, isStreaming: Boolean = false) {
   val isUser = turn.role == ChatTurn.Role.User
   Row(
     modifier = Modifier.fillMaxWidth(),
     horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
   ) {
-    Box(
-      modifier =
-        Modifier
-          .widthIn(max = 320.dp)
-          .background(
+    Column(
+      horizontalAlignment = if (isUser) Alignment.End else Alignment.Start,
+      modifier = Modifier.widthIn(max = 320.dp),
+    ) {
+      if (!isUser && turn.modelId != null) {
+        Text(
+          turn.modelId,
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          modifier = Modifier.padding(bottom = 2.dp, start = 4.dp),
+        )
+      }
+      Box(
+        modifier =
+          Modifier
+            .background(
+              color =
+                if (isUser) {
+                  MaterialTheme.colorScheme.primary
+                } else {
+                  MaterialTheme.colorScheme.surfaceVariant
+                },
+              shape = RoundedCornerShape(12.dp),
+            )
+            .padding(12.dp),
+      ) {
+        if (isStreaming) {
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+          ) {
+            CircularProgressIndicator(
+              modifier = Modifier.size(14.dp),
+              strokeWidth = 2.dp,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+              "Thinking…",
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+          }
+        } else {
+          Text(
+            text = turn.text.ifEmpty { "…" },
             color =
               if (isUser) {
-                MaterialTheme.colorScheme.primary
+                MaterialTheme.colorScheme.onPrimary
               } else {
-                MaterialTheme.colorScheme.surfaceVariant
+                MaterialTheme.colorScheme.onSurfaceVariant
               },
-            shape = RoundedCornerShape(12.dp),
           )
-          .padding(12.dp),
-    ) {
-      Text(
-        text = turn.text.ifEmpty { "…" },
-        color =
-          if (isUser) {
-            MaterialTheme.colorScheme.onPrimary
-          } else {
-            MaterialTheme.colorScheme.onSurfaceVariant
-          },
-      )
+        }
+      }
     }
   }
 }

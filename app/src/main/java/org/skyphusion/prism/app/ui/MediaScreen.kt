@@ -122,8 +122,12 @@ fun MediaScreen(
                 )
               },
               onClick = {
-                if (kind == MediaKind.Image) vm.selectedImageModelId = m.id
-                else vm.selectedVideoModelId = m.id
+                if (kind == MediaKind.Image) {
+                  vm.selectedImageModelId = m.id
+                } else {
+                  vm.selectedVideoModelId = m.id
+                }
+                vm.persistUIPrefs()
                 expanded = false
               },
             )
@@ -221,6 +225,17 @@ fun MediaScreen(
           modifier = Modifier.fillMaxWidth(),
         ) {
           Text(if (kind == MediaKind.Image) "Generate image" else "Generate video")
+        }
+        if (kind == MediaKind.Image && vm.mediaError != null && vm.imagePrompt.isNotBlank()) {
+          TextButton(
+            onClick = {
+              Haptics.light(view)
+              vm.retryLastImage()
+            },
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Text("Retry image (same prompt)")
+          }
         }
         if (kind == MediaKind.Video && vm.mediaError != null &&
           (vm.videoPrompt.isNotBlank() || vm.videoImageRef.isNotBlank())

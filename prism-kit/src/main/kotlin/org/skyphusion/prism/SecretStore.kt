@@ -18,6 +18,13 @@ object SecretStoreKeys {
   const val CONTROL_PLANE_DEVICE_KEY = "org.skyphusion.prism.control-plane.device-key"
   const val CONTROL_PLANE_BASE_URL = "org.skyphusion.prism.control-plane.base-url"
   const val DEVICE_LABEL = "org.skyphusion.prism.device-label"
+
+  /** UI prefs (non-secret; same store as iOS Keychain prefs keys). */
+  const val SELECTED_CHAT_MODEL = "org.skyphusion.prism.pref.chat-model"
+  const val SELECTED_IMAGE_MODEL = "org.skyphusion.prism.pref.image-model"
+  const val SELECTED_VIDEO_MODEL = "org.skyphusion.prism.pref.video-model"
+  const val USE_STREAM = "org.skyphusion.prism.pref.use-stream"
+  const val HIDE_UNSPENDABLE = "org.skyphusion.prism.pref.hide-unspendable"
 }
 
 /** In-memory store (unit tests + non-Android runtimes). Thread-safe. */

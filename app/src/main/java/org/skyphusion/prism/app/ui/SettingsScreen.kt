@@ -1,7 +1,10 @@
 package org.skyphusion.prism.app.ui
 
 import android.app.Activity
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,10 +18,12 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -180,6 +185,20 @@ fun SettingsScreen(
         modifier = Modifier.padding(top = 8.dp),
       )
 
+      Spacer(Modifier.height(16.dp))
+      Text("Preferences", style = MaterialTheme.typography.titleMedium)
+      Spacer(Modifier.height(8.dp))
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween,
+      ) {
+        Text("Hide unspendable models", style = MaterialTheme.typography.bodyMedium)
+        Switch(
+          checked = vm.hideUnspendable,
+          onCheckedChange = { vm.updateHideUnspendable(it) },
+        )
+      }
+
       Spacer(Modifier.height(24.dp))
       Button(
         onClick = {
@@ -194,12 +213,43 @@ fun SettingsScreen(
       ) {
         Text("Forget device key")
       }
+
       Spacer(Modifier.height(24.dp))
+      HorizontalDivider()
+      Spacer(Modifier.height(16.dp))
+      Text("About", style = MaterialTheme.typography.titleMedium)
+      Spacer(Modifier.height(8.dp))
+      AboutLink("skyphusion.org", "https://skyphusion.org")
+      AboutLink("Privacy", "https://skyphusion.org/privacy.html")
+      AboutLink("Playground", "https://play.skyphusion.org")
+      AboutLink("Status", "https://status.skyphusion.org")
+      TextButton(
+        onClick = {
+          context.startActivity(
+            Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:support@skyphusion.org")),
+          )
+        },
+      ) {
+        Text("support@skyphusion.org")
+      }
+      Spacer(Modifier.height(12.dp))
       Text(
         "PrismKit ${PrismKit.VERSION}",
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
       )
     }
+  }
+}
+
+@Composable
+private fun AboutLink(label: String, url: String) {
+  val context = LocalContext.current
+  TextButton(
+    onClick = {
+      context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+    },
+  ) {
+    Text(label)
   }
 }
