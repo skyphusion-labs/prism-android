@@ -3,7 +3,6 @@ package org.skyphusion.prism.app
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,10 +13,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import org.skyphusion.prism.app.ui.BiometricLockScreen
 import org.skyphusion.prism.app.ui.LoginScreen
 import org.skyphusion.prism.app.ui.OnboardingScreen
 import org.skyphusion.prism.app.ui.PlaneShell
@@ -25,7 +26,7 @@ import org.skyphusion.prism.app.ui.PrismTheme
 import org.skyphusion.prism.app.ui.SessionListScreen
 import org.skyphusion.prism.app.ui.SettingsScreen
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
@@ -50,44 +51,52 @@ class MainActivity : ComponentActivity() {
             onDispose { }
           }
 
-          // Foreground: plane health + balance (iOS scenePhase .active).
+          // Foreground: health + balance when unlocked; lock on background (iOS scenePhase).
           DisposableEffect(lifecycleOwner, vm) {
             val obs =
               LifecycleEventObserver { _, event ->
-                if (event == Lifecycle.Event.ON_RESUME) vm.onBecomeActive()
+                when (event) {
+                  Lifecycle.Event.ON_RESUME -> vm.onBecomeActive()
+                  Lifecycle.Event.ON_STOP -> vm.lockIfNeeded()
+                  else -> Unit
+                }
               }
             lifecycleOwner.lifecycle.addObserver(obs)
             onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
           }
 
-          val inApp = vm.canChat
-          when {
-            showSettings && (inApp || vm.showDeveloperSettings || vm.needsPlaygroundLogin) ->
-              SettingsScreen(
-                vm = vm,
-                onBack = { showSettings = false },
-              )
-            showSessions && inApp ->
-              SessionListScreen(
-                vm = vm,
-                onBack = { showSessions = false },
-              )
-            vm.needsPlaygroundLogin ->
-              LoginScreen(
-                vm = vm,
-                onOpenSettings = { showSettings = true },
-              )
-            vm.needsPlaneEnroll ->
-              OnboardingScreen(
-                vm = vm,
-                onOpenSettings = { showSettings = true },
-              )
-            else ->
-              PlaneShell(
-                vm = vm,
-                onOpenSettings = { showSettings = true },
-                onOpenSessions = { showSessions = true },
-              )
+          if (vm.isBiometricallyLocked && vm.hasDeviceKey) {
+            BiometricLockScreen(vm)
+          } else {
+            val inApp = vm.canChat
+            when {
+              showSettings && (inApp || vm.showDeveloperSettings || vm.needsPlaygroundLogin) ->
+                SettingsScreen(
+                  vm = vm,
+                  onBack = { showSettings = false },
+                )
+              showSessions && inApp ->
+                SessionListScreen(
+                  vm = vm,
+                  onBack = { showSessions = false },
+                )
+              vm.needsPlaygroundLogin ->
+                LoginScreen(
+                  vm = vm,
+                  onOpenSettings = { showSettings = true },
+                )
+              vm.needsPlaneEnroll ->
+                OnboardingScreen(
+                  vm = vm,
+                  onOpenSettings = { showSettings = true },
+                )
+              else ->
+                PlaneShell(
+                  vm = vm,
+                  onOpenSettings = { showSettings = true },
+                  onOpenSessions = { showSessions = true },
+                )
+            }
           }
         }
       }

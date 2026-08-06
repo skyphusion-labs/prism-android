@@ -160,6 +160,17 @@ class ModelsCodecTest {
     assertEquals(42L, meters.usageMicroUsd)
     assertEquals(true, meters.metered)
     assertNull(meters.stream)
+    assertTrue(meters.costDescription()!!.contains("This request:"))
+  }
+
+  @Test
+  fun meterHeadersUnmeteredCost() {
+    val m =
+      PrismMeterHeaders(
+        usageMicroUsd = 0,
+        metered = false,
+      )
+    assertEquals("Unmetered (plane could not price this call)", m.costDescription())
   }
 
   @Test

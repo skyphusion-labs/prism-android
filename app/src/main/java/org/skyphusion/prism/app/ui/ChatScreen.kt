@@ -95,12 +95,17 @@ fun ChatScreen(
   val context = LocalContext.current
   var refreshing by remember { mutableStateOf(false) }
   var attachMenu by remember { mutableStateOf(false) }
+  var micMenu by remember { mutableStateOf(false) }
   var chatMicRecording by remember { mutableStateOf(false) }
+  var pendingLiveAfterPermission by remember { mutableStateOf(false) }
   val chatMic = remember { MicRecorder(context.applicationContext) }
   var cameraUri by remember { mutableStateOf<Uri?>(null) }
 
   DisposableEffect(Unit) {
-    onDispose { chatMic.cancel() }
+    onDispose {
+      chatMic.cancel()
+      if (vm.liveSttRunning) vm.stopLiveStt(commit = false)
+    }
   }
 
   fun attachFromUri(uri: Uri) {
@@ -138,13 +143,18 @@ fun ChatScreen(
   val requestMicChat =
     rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
       if (granted) {
-        if (chatMic.start()) {
+        if (pendingLiveAfterPermission) {
+          pendingLiveAfterPermission = false
+          Haptics.light(view)
+          vm.startLiveStt()
+        } else if (chatMic.start()) {
           chatMicRecording = true
           Haptics.light(view)
         } else {
           vm.errorMessage = chatMic.errorMessage ?: "Could not start mic"
         }
       } else {
+        pendingLiveAfterPermission = false
         vm.errorMessage = "Microphone permission denied."
       }
     }
@@ -174,7 +184,8 @@ fun ChatScreen(
     vm.errorMessage = "No image on the clipboard."
   }
 
-  fun toggleChatMic() {
+  fun startFileMic() {
+    if (vm.liveSttRunning) vm.stopLiveStt(commit = false)
     if (chatMicRecording) {
       val cap = chatMic.stop()
       chatMicRecording = false
@@ -200,6 +211,27 @@ fun ChatScreen(
     } else {
       vm.errorMessage = chatMic.errorMessage ?: "Could not start mic"
     }
+  }
+
+  fun startLiveMic() {
+    if (chatMicRecording) {
+      chatMic.cancel()
+      chatMicRecording = false
+    }
+    if (vm.liveSttRunning) {
+      vm.stopLiveStt(commit = true)
+      return
+    }
+    val ok =
+      ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+        PackageManager.PERMISSION_GRANTED
+    if (!ok) {
+      pendingLiveAfterPermission = true
+      requestMicChat.launch(Manifest.permission.RECORD_AUDIO)
+      return
+    }
+    Haptics.light(view)
+    vm.startLiveStt()
   }
 
   LaunchedEffect(vm.turns.size, vm.turns.lastOrNull()?.text) {
@@ -444,6 +476,14 @@ fun ChatScreen(
         }
       }
 
+      vm.lastRequestCost?.let { cost ->
+        Text(
+          cost,
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+        )
+      }
       vm.chatSpendPreview?.let { preview ->
         Text(
           preview,
@@ -451,6 +491,40 @@ fun ChatScreen(
           color = MaterialTheme.colorScheme.onSurfaceVariant,
           modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
         )
+      }
+      if (vm.liveSttRunning || vm.liveSttStatus != null) {
+        Row(
+          modifier =
+            Modifier
+              .fillMaxWidth()
+              .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f))
+              .padding(horizontal = 12.dp, vertical = 6.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              vm.liveSttStatus ?: "Live STT",
+              style = MaterialTheme.typography.labelMedium,
+            )
+            if (vm.liveSttPartial.isNotBlank()) {
+              Text(
+                vm.liveSttPartial,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+              )
+            }
+          }
+          TextButton(
+            onClick = {
+              Haptics.light(view)
+              vm.stopLiveStt(commit = true)
+            },
+          ) {
+            Text("Stop")
+          }
+        }
       }
       if (vm.chatSttBusy) {
         Text(
@@ -462,7 +536,7 @@ fun ChatScreen(
       }
       if (chatMicRecording) {
         Text(
-          "Recording… tap mic to stop and add to draft",
+          "Recording… tap mic menu → Stop recording to add to draft",
           style = MaterialTheme.typography.labelSmall,
           color = MaterialTheme.colorScheme.error,
           modifier = Modifier.padding(horizontal = 12.dp),
@@ -547,17 +621,51 @@ fun ChatScreen(
             )
           }
         }
-        IconButton(
-          onClick = { toggleChatMic() },
-          enabled = !vm.isBusy && !vm.chatSttBusy && vm.canUseMediaDoors,
-        ) {
-          Icon(
-            Icons.Default.Mic,
-            contentDescription = if (chatMicRecording) "Stop mic STT" else "Mic to draft",
-            tint =
-              if (chatMicRecording) MaterialTheme.colorScheme.error
-              else MaterialTheme.colorScheme.onSurface,
-          )
+        Box {
+          IconButton(
+            onClick = {
+              if (chatMicRecording) {
+                startFileMic()
+              } else if (vm.liveSttRunning) {
+                startLiveMic()
+              } else {
+                micMenu = true
+              }
+            },
+            enabled =
+              (!vm.isBusy || chatMicRecording || vm.liveSttRunning) &&
+                !vm.chatSttBusy &&
+                vm.canUseMediaDoors,
+          ) {
+            Icon(
+              Icons.Default.Mic,
+              contentDescription = "Speech to text",
+              tint =
+                if (chatMicRecording || vm.liveSttRunning) MaterialTheme.colorScheme.error
+                else MaterialTheme.colorScheme.onSurface,
+            )
+          }
+          DropdownMenu(expanded = micMenu, onDismissRequest = { micMenu = false }) {
+            DropdownMenuItem(
+              text = {
+                Text(if (chatMicRecording) "Stop recording" else "Record (file STT)")
+              },
+              onClick = {
+                micMenu = false
+                startFileMic()
+              },
+            )
+            DropdownMenuItem(
+              text = {
+                Text(if (vm.liveSttRunning) "Stop live listen" else "Live listen (WebSocket)")
+              },
+              onClick = {
+                micMenu = false
+                startLiveMic()
+              },
+              enabled = vm.canUseMediaDoors,
+            )
+          }
         }
         OutlinedTextField(
           value = vm.draft,

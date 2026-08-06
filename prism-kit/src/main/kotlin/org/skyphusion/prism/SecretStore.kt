@@ -38,6 +38,15 @@ object SecretStoreKeys {
   const val BACKEND_MODE = "org.skyphusion.prism.backend-mode"
   /** When true, Settings shows backend switch + URL tinkering. */
   const val SHOW_DEVELOPER = "org.skyphusion.prism.pref.show-developer"
+  /** Face unlock / fingerprint gate after launch and background (iOS biometricLockEnabled). */
+  const val BIOMETRIC_LOCK_ENABLED = "org.skyphusion.prism.pref.biometric-lock"
+  /**
+   * Plain SharedPreferences keys for the home-screen balance widget (no secrets).
+   * Widget process cannot open EncryptedSharedPreferences easily.
+   */
+  const val WIDGET_BALANCE = "org.skyphusion.prism.widget.balance"
+  const val WIDGET_UPDATED_AT = "org.skyphusion.prism.widget.updated-at"
+  const val WIDGET_PREFS = "prism_widget"
 }
 
 /** In-memory store (unit tests + non-Android runtimes). Thread-safe. */

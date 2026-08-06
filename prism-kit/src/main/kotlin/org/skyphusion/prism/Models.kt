@@ -390,6 +390,18 @@ data class PrismMeterHeaders(
   val monthlyIncludedMicroUsd: Long? = null,
   val allowanceRemainingMicroUsd: Long? = null,
 ) {
+  /** One-line cost for chat UI (iOS PlaneMeterHeaders.costDescription). */
+  fun costDescription(): String? {
+    val u = usageMicroUsd ?: return null
+    if (metered == false) return "Unmetered (plane could not price this call)"
+    val usd = u / 1_000_000.0
+    return if (usd >= 0.01) {
+      String.format("This request: $%.4f", usd)
+    } else {
+      String.format("This request: $%.6f", usd)
+    }
+  }
+
   companion object {
     fun from(headers: Map<String, List<String>>): PrismMeterHeaders {
       fun one(name: String): String? =

@@ -20,13 +20,16 @@ AGPL **Android client** for Prism against the commercial control plane
 
 ## Status
 
-**v0.7.0** -- iOS 0.8.3 product parity:
+**v0.8.0** -- iOS 0.8.4 product deltas (+ prior 0.8.3 surface):
 
-- **Usage** screen (More → dual-pool + period meter via `GET /v1/usage`)
-- Chat **rate preview** + capability tags; library / **camera** / **clipboard** attach
-- Composer **mic → STT → draft**; video completion **notification**
-- Expanded onboarding (welcome → enroll → tips)
-- Prior 0.6.0: vision multiparty, Seedance default, stream fallback, sync/export, live STT
+- **Biometric / screen-lock** gate after launch and background
+- **Per-request cost** line (`prism-usage-micro-usd`) on non-stream chat
+- Chat **live STT** WebSocket + file STT mic menu; commit to draft
+- Import chats: merge vs replace preview
+- Home-screen **balance widget**
+- Prior 0.7.0: Usage, rate preview, camera/clipboard, video notify, onboarding
+
+**Beta distribution (non-Android-native friendly):** [docs/PLAY-INTERNAL.md](docs/PLAY-INTERNAL.md)
 
 Create the three in-app products in Play Console (same product ids as App Store). Production
 redeem needs Worker secret `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` on the plane.

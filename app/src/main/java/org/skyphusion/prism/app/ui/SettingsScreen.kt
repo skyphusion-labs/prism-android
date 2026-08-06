@@ -3,6 +3,7 @@ package org.skyphusion.prism.app.ui
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -130,6 +131,37 @@ fun SettingsScreen(
     ) {
       if (!vm.isNetworkSatisfied) {
         OfflineBanner(Modifier.padding(bottom = 12.dp))
+      }
+
+      if (vm.backend == BackendKind.ControlPlane && vm.hasDeviceKey) {
+        Text("Lock", style = MaterialTheme.typography.titleMedium)
+        val bioAvailable = org.skyphusion.prism.app.BiometricGate.isAvailable(context)
+        val bioLabel = org.skyphusion.prism.app.BiometricGate.label(context)
+        Row(
+          modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+          horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+          Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+            Text("Require $bioLabel")
+            Text(
+              if (bioAvailable) {
+                "When enabled, Prism asks for $bioLabel (or device PIN) after launch and when returning from background. Device key stays encrypted either way."
+              } else {
+                "Biometrics / screen lock are not available on this device. Device key remains encrypted."
+              },
+              style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+          }
+          Switch(
+            checked = vm.biometricLockEnabled,
+            onCheckedChange = { vm.updateBiometricLockEnabled(it) },
+            enabled = bioAvailable,
+          )
+        }
+        Spacer(Modifier.height(16.dp))
+        HorizontalDivider()
+        Spacer(Modifier.height(16.dp))
       }
 
       Text("Session", style = MaterialTheme.typography.titleMedium)

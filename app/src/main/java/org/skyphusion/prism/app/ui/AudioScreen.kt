@@ -72,7 +72,7 @@ fun AudioScreen(
   DisposableEffect(Unit) {
     onDispose {
       mic.cancel()
-      vm.stopLiveStt()
+      vm.stopLiveStt(commit = false)
     }
   }
 
@@ -298,7 +298,7 @@ fun AudioScreen(
         Button(
           onClick = {
             Haptics.light(view)
-            vm.stopLiveStt()
+            vm.stopLiveStt(commit = true)
           },
           modifier = Modifier.fillMaxWidth(),
         ) {
