@@ -59,6 +59,30 @@ class ModelsCodecTest {
   }
 
   @Test
+  fun multipartyVisionMessageEncode() {
+    val msg =
+      ControlPlaneChatMessage(
+        role = "user",
+        content = "what is this?",
+        imageDataUrls = listOf("data:image/jpeg;base64,abc"),
+      )
+    val s = prismJsonEncode.encodeToString(ControlPlaneChatMessage.serializer(), msg)
+    assertTrue(s.contains("image_url"), s)
+    assertTrue(s.contains("data:image/jpeg;base64,abc"), s)
+    assertTrue(s.contains("\"type\":\"text\""), s)
+    assertTrue(s.contains("what is this?"), s)
+    assertFalse(s.contains("imageDataUrls"), s)
+  }
+
+  @Test
+  fun chatAttachmentFromDataUrl() {
+    val att = ChatAttachment.image("data:image/png;base64,AAA")
+    assertEquals("image", att.type)
+    assertEquals("image/png", att.mime)
+    assertEquals("AAA", att.data)
+  }
+
+  @Test
   fun chatResponseFirstContent() {
     val json =
       """

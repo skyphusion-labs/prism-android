@@ -269,7 +269,8 @@ fun MediaScreen(
         if (kind == MediaKind.Image) {
           "Unit-priced image door. Prefer xAI / Flux when available. i2i models need a reference."
         } else {
-          "Unit-priced video door. Prefer Veo / Seedance Fast. Grok video needs plane 0.4.14+ (ZDR)."
+          "Unit-priced video door. Prefer Seedance Fast / Veo. Hailuo is image-to-video only. " +
+            "Grok video needs plane 0.4.14+ (ZDR)."
         },
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -469,7 +470,21 @@ fun MediaScreen(
 
       if (history.isNotEmpty()) {
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
-        Text("History (this session)", style = MaterialTheme.typography.titleSmall)
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Text("History (this session)", style = MaterialTheme.typography.titleSmall)
+          TextButton(
+            onClick = {
+              Haptics.light(view)
+              vm.clearMediaHistory()
+            },
+          ) {
+            Text("Clear")
+          }
+        }
         Text(
           "Newest first. Tap to restore. Not saved across launches.",
           style = MaterialTheme.typography.labelSmall,

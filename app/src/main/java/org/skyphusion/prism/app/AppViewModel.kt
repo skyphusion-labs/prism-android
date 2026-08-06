@@ -19,6 +19,11 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Instant
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.util.Base64
+import java.io.ByteArrayOutputStream
+import org.skyphusion.prism.ChatAttachment
 import org.skyphusion.prism.ChatStreamEvent
 import org.skyphusion.prism.ControlPlaneChatMessage
 import org.skyphusion.prism.ControlPlaneChatRequest
@@ -66,6 +71,8 @@ data class ChatTurn(
   val role: Role,
   var text: String,
   val modelId: String? = null,
+  /** Vision attachments for this turn (data:image/... URLs). User turns only. */
+  val imageDataUrls: List<String>? = null,
 ) {
   enum class Role { User, Assistant, System }
 }
@@ -155,6 +162,12 @@ class AppViewModel(
     private set
   private val sessionStore = ChatSessionStore(appContext)
   var draft by mutableStateOf("")
+  /** Pending chat image attachments (data URLs) for the next send. Cap 3. */
+  var draftImageDataUrls = mutableStateListOf<String>()
+    private set
+  var serverSyncBusy by mutableStateOf(false)
+    private set
+  var serverSyncMessage by mutableStateOf<String?>(null)
   var useStream by mutableStateOf(
     secrets.get(SecretStoreKeys.USE_STREAM)?.let { it != "0" && !it.equals("false", true) } ?: true,
   )
@@ -257,6 +270,11 @@ class AppViewModel(
   var lastSpeechFormat by mutableStateOf<String?>("mp3")
   var sttAudioDataUrl by mutableStateOf("")
   var lastTranscript by mutableStateOf<String?>(null)
+  /** Live plane STT WebSocket (linear16 @ 16 kHz). */
+  var liveSttRunning by mutableStateOf(false)
+    private set
+  var liveSttPartial by mutableStateOf("")
+  private var liveSttSession: LiveSttSession? = null
   var musicPrompt by mutableStateOf("")
   var musicLyrics by mutableStateOf("")
   var musicBusy by mutableStateOf(false)
@@ -445,6 +463,7 @@ class AppViewModel(
 
   override fun onCleared() {
     stopNetworkMonitor()
+    stopLiveStt()
     try {
       speechPlayer?.release()
     } catch (_: Exception) {
@@ -965,10 +984,12 @@ class AppViewModel(
           ?: images.firstOrNull()?.id
     }
     if (selectedVideoModelId == null || videos.none { it.id == selectedVideoModelId }) {
+      // Prefer Seedance for text-to-video (Hailuo is i2v-only; Grok needs ZDR path).
       selectedVideoModelId =
-        videos.firstOrNull { it.id == "google/veo-3.1-fast" }?.id
+        videos.firstOrNull { it.id == "bytedance/seedance-2.0-fast" }?.id
+          ?: videos.firstOrNull { it.id.startsWith("bytedance/seedance") }?.id
+          ?: videos.firstOrNull { it.id == "google/veo-3.1-fast" }?.id
           ?: videos.firstOrNull { it.id.startsWith("google/veo") }?.id
-          ?: videos.firstOrNull { it.id == "bytedance/seedance-2.0-fast" }?.id
           ?: videos.firstOrNull {
             !it.id.startsWith("minimax/hailuo") && !it.id.startsWith("xai/grok-imagine-video")
           }?.id
@@ -1035,6 +1056,7 @@ class AppViewModel(
   /** Flush live transcript into [sessions] and disk. */
   fun persistCurrentSession() {
     val id = currentSessionId
+    val convId = playgroundConversationId
     if (id == null) {
       if (turns.isEmpty()) return
       val s =
@@ -1042,6 +1064,7 @@ class AppViewModel(
           title = ChatSession.makeTitle(turns.toList()),
           turns = turns.toList(),
           selectedModelId = selectedModelId,
+          conversationId = convId,
           compact = compactState,
         )
       sessions.add(0, s)
@@ -1058,6 +1081,7 @@ class AppViewModel(
           title = ChatSession.makeTitle(turns.toList()),
           turns = turns.toList(),
           selectedModelId = selectedModelId,
+          conversationId = convId ?: prev.conversationId,
           compact = compactState,
           updatedAtMs = System.currentTimeMillis(),
         )
@@ -1090,9 +1114,11 @@ class AppViewModel(
     currentSessionId = s.id
     turns.clear()
     compactState = null
+    playgroundConversationId = null
     errorMessage = null
     clearChatFailure()
     draft = ""
+    draftImageDataUrls.clear()
     trimSessions()
     saveSessionsToDisk()
   }
@@ -1104,11 +1130,13 @@ class AppViewModel(
     turns.clear()
     turns.addAll(s.turns)
     compactState = s.compact
+    playgroundConversationId = s.conversationId
     if (s.selectedModelId != null && chatModels.any { it.id == s.selectedModelId }) {
       selectedModelId = s.selectedModelId
     }
     clearChatFailure()
     errorMessage = null
+    draftImageDataUrls.clear()
     if (persist) saveSessionsToDisk()
   }
 
@@ -1396,29 +1424,40 @@ class AppViewModel(
       return
     }
 
-    val text: String =
-      when (mode) {
-        SendMode.NewFromDraft -> {
-          val t = draft.trim()
-          if (t.isEmpty()) return
-          draft = ""
-          clearChatFailure()
-          turns.add(ChatTurn(role = ChatTurn.Role.User, text = t))
-          t
-        }
-        SendMode.RegenerateLast -> {
-          while (turns.lastOrNull()?.role == ChatTurn.Role.Assistant) {
-            turns.removeAt(turns.lastIndex)
-          }
-          val user = turns.lastOrNull()
-          if (user == null || user.role != ChatTurn.Role.User) {
-            errorMessage = "Nothing to regenerate."
-            return
-          }
-          clearChatFailure()
-          user.text
-        }
+    val sendImages: List<String>
+    val text: String
+    when (mode) {
+      SendMode.NewFromDraft -> {
+        val t = draft.trim()
+        val imgs = draftImageDataUrls.toList()
+        if (t.isEmpty() && imgs.isEmpty()) return
+        text = if (t.isEmpty()) "(image)" else t
+        sendImages = imgs
+        draft = ""
+        draftImageDataUrls.clear()
+        clearChatFailure()
+        turns.add(
+          ChatTurn(
+            role = ChatTurn.Role.User,
+            text = text,
+            imageDataUrls = sendImages.takeIf { it.isNotEmpty() },
+          ),
+        )
       }
+      SendMode.RegenerateLast -> {
+        while (turns.lastOrNull()?.role == ChatTurn.Role.Assistant) {
+          turns.removeAt(turns.lastIndex)
+        }
+        val user = turns.lastOrNull()
+        if (user == null || user.role != ChatTurn.Role.User) {
+          errorMessage = "Nothing to regenerate."
+          return
+        }
+        clearChatFailure()
+        text = user.text
+        sendImages = user.imageDataUrls.orEmpty()
+      }
+    }
 
     val assistant = ChatTurn(role = ChatTurn.Role.Assistant, text = "", modelId = modelId)
     turns.add(assistant)
@@ -1431,7 +1470,8 @@ class AppViewModel(
         try {
           when (backend) {
             BackendKind.ControlPlane -> sendPlane(modelId, model, assistantIndex, assistant)
-            BackendKind.Playground -> sendPlayground(modelId, model, text, assistantIndex, assistant)
+            BackendKind.Playground ->
+              sendPlayground(modelId, model, text, assistantIndex, assistant, sendImages)
           }
           if (backend == BackendKind.ControlPlane) refreshAccount()
           persistCurrentSession()
@@ -1491,6 +1531,17 @@ class AppViewModel(
             }
           }
       }
+      // Stream closed with no text (mobile partial body). Fall back once (iOS #33).
+      val empty =
+        turns.getOrNull(assistantIndex)?.text.isNullOrEmpty()
+      if (empty) {
+        val text =
+          withContext(Dispatchers.IO) {
+            client.chat(model = modelId, messages = history)
+          }
+        if (text.isEmpty()) throw PrismError.Server("Empty stream completion")
+        turns[assistantIndex] = assistant.copy(text = text)
+      }
     } else {
       val reply =
         withContext(Dispatchers.IO) {
@@ -1506,12 +1557,16 @@ class AppViewModel(
     userText: String,
     assistantIndex: Int,
     assistant: ChatTurn,
+    imageDataUrls: List<String> = emptyList(),
   ) {
+    val atts =
+      imageDataUrls.takeIf { it.isNotEmpty() }?.map { ChatAttachment.image(dataURL = it) }
     val body =
       PlaygroundChatRequest(
         model = modelId,
         userInput = userText,
         conversationId = playgroundConversationId,
+        attachments = atts,
       )
     if (useStream && model?.streaming != false) {
       withContext(Dispatchers.IO) {
@@ -1543,6 +1598,18 @@ class AppViewModel(
               is ChatStreamEvent.Unknown -> Unit
             }
           }
+      }
+      if (turns.getOrNull(assistantIndex)?.text.isNullOrEmpty()) {
+        val res =
+          withContext(Dispatchers.IO) {
+            playground.chat(body)
+          }
+        val out = res.output.orEmpty()
+        if (out.isEmpty()) throw PrismError.Server("Empty stream completion")
+        turns[assistantIndex] = assistant.copy(text = out)
+        res.conversationId?.takeIf { it.isNotBlank() }?.let {
+          playgroundConversationId = it
+        }
       }
     } else {
       val res =
@@ -1711,6 +1778,152 @@ class AppViewModel(
   fun historyFor(kind: MediaKind): List<MediaHistoryItem> =
     mediaHistory.filter { it.kind == kind }
 
+  fun clearMediaHistory() {
+    mediaHistory.clear()
+  }
+
+  /**
+   * Attach a photo (JPEG/PNG bytes as data URL) to the next chat send.
+   * Cap 3 images / ~3 MiB each after re-compress.
+   */
+  fun attachChatImageBytes(bytes: ByteArray, maxBytes: Int = 3 * 1024 * 1024) {
+    if (draftImageDataUrls.size >= 3) {
+      errorMessage = "At most 3 images per message."
+      return
+    }
+    var jpeg = bytes
+    if (jpeg.size > maxBytes) {
+      val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+      if (bmp == null) {
+        errorMessage = "Image is too large (max ~3 MB)."
+        return
+      }
+      jpeg =
+        ByteArrayOutputStream().use { bos ->
+          var q = 80
+          while (q >= 40) {
+            bos.reset()
+            bmp.compress(Bitmap.CompressFormat.JPEG, q, bos)
+            if (bos.size() <= maxBytes) break
+            q -= 15
+          }
+          bos.toByteArray()
+        }
+      if (!bmp.isRecycled) bmp.recycle()
+      if (jpeg.size > maxBytes) {
+        errorMessage = "Image is too large (max ~3 MB after compress)."
+        return
+      }
+    }
+    val b64 = Base64.encodeToString(jpeg, Base64.NO_WRAP)
+    draftImageDataUrls.add("data:image/jpeg;base64,$b64")
+  }
+
+  fun removeDraftImage(at: Int) {
+    if (at in draftImageDataUrls.indices) draftImageDataUrls.removeAt(at)
+  }
+
+  fun clearDraftImages() {
+    draftImageDataUrls.clear()
+  }
+
+  /** Pull playground server conversation list into local sessions (playground only). */
+  fun syncPlaygroundConversations() {
+    if (backend != BackendKind.Playground || !playgroundAuthenticated) {
+      serverSyncMessage = "Sign in to the playground to sync cloud chats."
+      return
+    }
+    viewModelScope.launch {
+      serverSyncBusy = true
+      serverSyncMessage = null
+      try {
+        val remote =
+          withContext(Dispatchers.IO) {
+            playground.listConversations()
+          }
+        var imported = 0
+        for (item in remote.take(40)) {
+          val cid = item.conversationId
+          if (sessions.any { it.conversationId == cid }) continue
+          val detail =
+            withContext(Dispatchers.IO) {
+              playground.getConversation(cid)
+            }
+          if (!detail.error.isNullOrBlank()) continue
+          val newTurns = mutableListOf<ChatTurn>()
+          for (row in detail.turns.orEmpty()) {
+            val userIn = row.userInput.orEmpty()
+            val out = row.resolvedOutput.orEmpty()
+            if (userIn.isNotEmpty()) {
+              newTurns.add(ChatTurn(role = ChatTurn.Role.User, text = userIn))
+            }
+            if (out.isNotEmpty()) {
+              newTurns.add(
+                ChatTurn(
+                  role = ChatTurn.Role.Assistant,
+                  text = out,
+                  modelId = row.model,
+                ),
+              )
+            }
+          }
+          val rawTitle = item.firstInput.orEmpty()
+          val title =
+            when {
+              rawTitle.isEmpty() -> "Cloud chat"
+              rawTitle.length <= 48 -> rawTitle
+              else -> rawTitle.take(45) + "..."
+            }
+          sessions.add(
+            ChatSession(
+              title = title,
+              turns = newTurns,
+              conversationId = cid,
+              selectedModelId = item.latestModel,
+              compact = detail.compact,
+            ),
+          )
+          imported += 1
+        }
+        sessions.sortByDescending { it.updatedAtMs }
+        trimSessions()
+        saveSessionsToDisk()
+        serverSyncMessage =
+          if (imported == 0) {
+            "Already up to date with playground (${remote.size} cloud chats)."
+          } else {
+            "Imported $imported chat(s) from playground."
+          }
+      } catch (e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
+        serverSyncMessage = e.toUserMessage()
+      } finally {
+        serverSyncBusy = false
+      }
+    }
+  }
+
+  /** Export all local sessions as JSON bytes (share / backup). */
+  fun exportSessionsJson(): ByteArray {
+    persistCurrentSession()
+    return sessionStore.exportJson(sessions.toList(), currentSessionId)
+  }
+
+  /** Import sessions from JSON (merge by id). */
+  fun importSessionsJson(data: ByteArray) {
+    try {
+      persistCurrentSession()
+      val merged = sessionStore.mergeFromJson(sessions.toList(), data)
+      sessions.clear()
+      sessions.addAll(merged)
+      ensureCurrentSession()
+      saveSessionsToDisk()
+      banner = "Imported chats (${merged.size} total)."
+    } catch (e: Exception) {
+      errorMessage = e.message ?: "Could not import sessions"
+    }
+  }
+
   private fun pushMediaHistory(item: MediaHistoryItem) {
     mediaHistory.add(0, item)
     while (mediaHistory.size > MEDIA_HISTORY_CAP) {
@@ -1764,8 +1977,15 @@ class AppViewModel(
       if (through != null && idx <= through) continue
       when (turn.role) {
         ChatTurn.Role.User -> {
-          if (turn.text.isNotEmpty()) {
-            out.add(ControlPlaneChatMessage(role = "user", content = turn.text))
+          val imgs = turn.imageDataUrls.orEmpty()
+          if (turn.text.isNotEmpty() || imgs.isNotEmpty()) {
+            out.add(
+              ControlPlaneChatMessage(
+                role = "user",
+                content = turn.text.ifEmpty { " " },
+                imageDataUrls = imgs.takeIf { it.isNotEmpty() },
+              ),
+            )
           }
         }
         ChatTurn.Role.Assistant -> {
@@ -1910,6 +2130,71 @@ class AppViewModel(
     sttAudioDataUrl = "data:$m;base64,$base64"
   }
 
+  /**
+   * Live STT via plane WebSocket (`GET /v1/stt/stream`, Bearer pcp_).
+   * Streams linear16 PCM @ 16 kHz; partials in [liveSttPartial], finals append [lastTranscript].
+   */
+  fun startLiveStt() {
+    if (!hasDeviceKey || liveSttRunning || speechBusy || backend != BackendKind.ControlPlane) {
+      if (backend != BackendKind.ControlPlane) {
+        speechError = "Live STT needs the control plane."
+      }
+      return
+    }
+    if (!isNetworkSatisfied) {
+      speechError = "No network connection. Reconnect and try again."
+      return
+    }
+    stopLiveStt()
+    speechError = null
+    liveSttPartial = ""
+    speechStatus = "Live STT connecting…"
+    val session =
+      LiveSttSession(
+        client = client,
+        onPartial = { t ->
+          viewModelScope.launch {
+            liveSttPartial = t
+            speechStatus = "Listening…"
+          }
+        },
+        onFinal = { t ->
+          viewModelScope.launch {
+            val prev = lastTranscript?.trim().orEmpty()
+            lastTranscript =
+              if (prev.isEmpty()) t else "$prev $t".trim()
+            liveSttPartial = ""
+            speechStatus = "Live final"
+          }
+        },
+        onError = { msg ->
+          viewModelScope.launch {
+            speechError = msg
+            speechStatus = null
+            liveSttRunning = false
+          }
+        },
+        onClosed = {
+          viewModelScope.launch {
+            liveSttRunning = false
+            if (speechStatus == "Listening…" || speechStatus == "Live STT connecting…") {
+              speechStatus = "Live STT stopped"
+            }
+          }
+        },
+      )
+    liveSttSession = session
+    liveSttRunning = true
+    session.start()
+  }
+
+  fun stopLiveStt() {
+    liveSttSession?.stop()
+    liveSttSession = null
+    liveSttRunning = false
+    liveSttPartial = ""
+  }
+
   fun generateMusic() {
     val modelId = selectedMusicModelId ?: selectedMusicModel?.id ?: return
     val prompt = musicPrompt.trim()
@@ -1963,13 +2248,13 @@ class AppViewModel(
   companion object {
     private const val MEDIA_HISTORY_CAP = 20
 
-    /** Empty-state chips; tapping fills the draft (user can edit before send). */
+    /** Empty-state chips; full self-contained prompts (never trailing blanks). */
     val starterPrompts: List<String> =
       listOf(
-        "Explain this simply, like I am new to the topic:",
-        "Summarize the following in three short bullets:",
-        "Write a clear product blurb (2 sentences) for:",
-        "List practical next steps to debug:",
+        "In plain language, explain how HTTPS keeps web traffic private.",
+        "Summarize the tradeoffs between SQL and document databases in three short bullets.",
+        "Write a two-sentence product blurb for a prepaid AI playground aimed at indie developers.",
+        "List five practical steps to debug a REST API that returns 502 only under load.",
       )
 
     fun normalizeSecret(raw: String): String =

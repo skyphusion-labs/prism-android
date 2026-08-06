@@ -3,6 +3,12 @@ package org.skyphusion.prism
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 
 // Additive-friendly shapes for the commercial control plane
 // (prism-control-plane docs/CONTRACT.md + openapi.yaml).
@@ -168,11 +174,87 @@ data class UsageSummary(
   }
 }
 
-@Serializable
+/**
+ * OpenAI-style chat message. When [imageDataUrls] is non-empty, encode uses multiparty
+ * `content` (image_url parts + text) for vision models (plane 0.4.23+).
+ */
+@Serializable(with = ControlPlaneChatMessageSerializer::class)
 data class ControlPlaneChatMessage(
   val role: String,
   val content: String,
+  val imageDataUrls: List<String>? = null,
 )
+
+object ControlPlaneChatMessageSerializer :
+  kotlinx.serialization.KSerializer<ControlPlaneChatMessage> {
+  override val descriptor: kotlinx.serialization.descriptors.SerialDescriptor =
+    kotlinx.serialization.descriptors.buildClassSerialDescriptor("ControlPlaneChatMessage") {
+      element("role", kotlinx.serialization.descriptors.PrimitiveSerialDescriptor("role", kotlinx.serialization.descriptors.PrimitiveKind.STRING))
+      element("content", JsonElement.serializer().descriptor)
+    }
+
+  override fun serialize(
+    encoder: kotlinx.serialization.encoding.Encoder,
+    value: ControlPlaneChatMessage,
+  ) {
+    val jsonEncoder =
+      encoder as? kotlinx.serialization.json.JsonEncoder
+        ?: error("ControlPlaneChatMessage requires JSON encoding")
+    val contentEl: JsonElement =
+      if (!value.imageDataUrls.isNullOrEmpty()) {
+        buildJsonArray {
+          for (url in value.imageDataUrls) {
+            add(
+              buildJsonObject {
+                put("type", "image_url")
+                put(
+                  "image_url",
+                  buildJsonObject {
+                    put("url", url)
+                  },
+                )
+              },
+            )
+          }
+          add(
+            buildJsonObject {
+              put("type", "text")
+              put("text", value.content.ifEmpty { " " })
+            },
+          )
+        }
+      } else {
+        JsonPrimitive(value.content)
+      }
+    jsonEncoder.encodeJsonElement(
+      buildJsonObject {
+        put("role", value.role)
+        put("content", contentEl)
+      },
+    )
+  }
+
+  override fun deserialize(
+    decoder: kotlinx.serialization.encoding.Decoder,
+  ): ControlPlaneChatMessage {
+    val jsonDecoder =
+      decoder as? kotlinx.serialization.json.JsonDecoder
+        ?: error("ControlPlaneChatMessage requires JSON decoding")
+    val obj = jsonDecoder.decodeJsonElement().jsonObject
+    val role = obj["role"]?.jsonPrimitive?.content.orEmpty()
+    val contentEl = obj["content"]
+    val content =
+      when (contentEl) {
+        is kotlinx.serialization.json.JsonPrimitive -> contentEl.content
+        is kotlinx.serialization.json.JsonArray ->
+          contentEl.mapNotNull { part ->
+            part.jsonObject["text"]?.jsonPrimitive?.content
+          }.joinToString("")
+        else -> ""
+      }
+    return ControlPlaneChatMessage(role = role, content = content)
+  }
+}
 
 @Serializable
 data class ControlPlaneChatRequest(
@@ -391,6 +473,33 @@ data class AuthSuccess(
   val error: String? = null,
 )
 
+/** Playground attachment (image / audio / document). Matches prism InputAttachment subset. */
+@Serializable
+data class ChatAttachment(
+  val type: String,
+  val data: String? = null,
+  val mime: String? = null,
+  val name: String? = null,
+) {
+  companion object {
+    /** Image from a data URL (`data:image/png;base64,...`). */
+    fun image(dataURL: String, name: String? = null): ChatAttachment {
+      var mime = "image/jpeg"
+      var b64 = dataURL
+      if (dataURL.startsWith("data:")) {
+        val comma = dataURL.indexOf(',')
+        if (comma > 0) {
+          val header = dataURL.substring(5, comma) // after "data:"
+          val semi = header.indexOf(';')
+          mime = if (semi >= 0) header.substring(0, semi) else header
+          b64 = dataURL.substring(comma + 1)
+        }
+      }
+      return ChatAttachment(type = "image", data = b64, mime = mime, name = name)
+    }
+  }
+}
+
 @Serializable
 data class PlaygroundChatRequest(
   val model: String,
@@ -399,7 +508,37 @@ data class PlaygroundChatRequest(
   @SerialName("conversation_id") val conversationId: String? = null,
   @SerialName("use_docs") val useDocs: Boolean? = null,
   @SerialName("use_web_search") val useWebSearch: Boolean? = null,
+  val attachments: List<ChatAttachment>? = null,
 )
+
+/** One row from `GET /api/conversations` (playground server history). */
+@Serializable
+data class ConversationListItem(
+  @SerialName("conversation_id") val conversationId: String,
+  @SerialName("turn_count") val turnCount: Int? = null,
+  @SerialName("first_input") val firstInput: String? = null,
+  @SerialName("latest_model") val latestModel: String? = null,
+  @SerialName("last_created_at") val lastCreatedAt: String? = null,
+  @SerialName("first_created_at") val firstCreatedAt: String? = null,
+)
+
+@Serializable
+data class ConversationListResponse(
+  val conversations: List<ConversationListItem>? = null,
+)
+
+/** Chat table row from `GET /api/conversations/:id`. */
+@Serializable
+data class ConversationTurnRow(
+  val role: String? = null,
+  @SerialName("user_input") val userInput: String? = null,
+  val output: String? = null,
+  val model: String? = null,
+  @SerialName("turn_index") val turnIndex: Int? = null,
+  @SerialName("assistant_output") val assistantOutput: String? = null,
+) {
+  val resolvedOutput: String? get() = output ?: assistantOutput
+}
 
 @Serializable
 data class PlaygroundChatResponse(
@@ -454,6 +593,15 @@ data class ConversationCompactClearResponse(
   @SerialName("conversation_id") val conversationId: String? = null,
   val compact: ConversationCompactState? = null,
   val cleared: Boolean? = null,
+  val error: String? = null,
+)
+
+/** `GET /api/conversations/:id` envelope (turns for full transcript; compact optional). */
+@Serializable
+data class ConversationDetailResponse(
+  @SerialName("conversation_id") val conversationId: String? = null,
+  val compact: ConversationCompactState? = null,
+  val turns: List<ConversationTurnRow>? = null,
   val error: String? = null,
 )
 
@@ -560,6 +708,17 @@ data class TranscriptionRequest(
 data class TranscriptionResponse(
   val model: String? = null,
   val text: String? = null,
+  val error: ControlPlaneErrorBody? = null,
+)
+
+/** `POST /v1/stt/sessions` -- short-lived browser ticket (native prefers Bearer on WS). */
+@Serializable
+data class SttSessionResponse(
+  val ticket: String? = null,
+  @SerialName("expires_at") val expiresAt: String? = null,
+  @SerialName("expires_in") val expiresIn: Int? = null,
+  val protocol: String? = null,
+  @SerialName("stream_path") val streamPath: String? = null,
   val error: ControlPlaneErrorBody? = null,
 )
 

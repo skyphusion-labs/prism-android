@@ -1,8 +1,12 @@
 package org.skyphusion.prism.app.ui
 
 import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +21,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
@@ -25,6 +30,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Settings
@@ -73,6 +79,19 @@ fun ChatScreen(
   val view = LocalView.current
   val context = LocalContext.current
   var refreshing by remember { mutableStateOf(false) }
+  val pickChatImage =
+    rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+      if (uri == null) return@rememberLauncherForActivityResult
+      try {
+        val bytes =
+          context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            ?: return@rememberLauncherForActivityResult
+        vm.attachChatImageBytes(bytes)
+        Haptics.light(view)
+      } catch (e: Exception) {
+        vm.errorMessage = e.message ?: "Could not read image"
+      }
+    }
   LaunchedEffect(vm.turns.size, vm.turns.lastOrNull()?.text) {
     if (vm.turns.isNotEmpty()) {
       listState.animateScrollToItem(vm.turns.lastIndex)
@@ -82,6 +101,10 @@ fun ChatScreen(
   LaunchedEffect(vm.isBusy) {
     if (!vm.isBusy) refreshing = false
   }
+  val canSend =
+    !vm.isBusy &&
+      vm.selectedModelId != null &&
+      (vm.draft.isNotBlank() || vm.draftImageDataUrls.isNotEmpty())
 
   Scaffold(
     topBar = {
@@ -310,6 +333,26 @@ fun ChatScreen(
         }
       }
 
+      if (vm.draftImageDataUrls.isNotEmpty()) {
+        Row(
+          modifier =
+            Modifier
+              .fillMaxWidth()
+              .horizontalScroll(rememberScrollState())
+              .padding(horizontal = 12.dp),
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          vm.draftImageDataUrls.forEachIndexed { idx, _ ->
+            TextButton(onClick = { vm.removeDraftImage(idx) }) {
+              Text("Image ${idx + 1} ×")
+            }
+          }
+          TextButton(onClick = { vm.clearDraftImages() }) {
+            Text("Clear photos")
+          }
+        }
+      }
       Row(
         modifier =
           Modifier
@@ -317,6 +360,16 @@ fun ChatScreen(
             .padding(12.dp),
         verticalAlignment = Alignment.Bottom,
       ) {
+        IconButton(
+          onClick = {
+            pickChatImage.launch(
+              PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+            )
+          },
+          enabled = !vm.isBusy && vm.draftImageDataUrls.size < 3,
+        ) {
+          Icon(Icons.Default.Image, contentDescription = "Attach photo")
+        }
         OutlinedTextField(
           value = vm.draft,
           onValueChange = { vm.draft = it },
@@ -335,7 +388,7 @@ fun ChatScreen(
               Haptics.light(view)
               vm.send()
             },
-            enabled = vm.draft.isNotBlank() && vm.selectedModelId != null,
+            enabled = canSend,
           ) {
             Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
           }
@@ -431,8 +484,8 @@ private fun ChatEmptyState(vm: AppViewModel, modifier: Modifier = Modifier) {
     )
     Text("Start a conversation", style = MaterialTheme.typography.titleMedium)
     Text(
-      "Messages stay on this device. Switch models anytime; context is kept until Clear chat. " +
-        "After a few turns, Compact summarizes older ones for the model.",
+      "Messages stay on this device (plane privacy). Attach photos for vision models. " +
+        "Compact summarizes older turns. Playground: sync cloud history from the chat list.",
       style = MaterialTheme.typography.bodySmall,
       color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -567,6 +620,14 @@ private fun TurnBubble(
           style = MaterialTheme.typography.labelSmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
           modifier = Modifier.padding(bottom = 2.dp, start = 4.dp),
+        )
+      }
+      turn.imageDataUrls?.takeIf { it.isNotEmpty() }?.let { urls ->
+        Text(
+          "${urls.size} photo${if (urls.size == 1) "" else "s"} attached",
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          modifier = Modifier.padding(bottom = 2.dp),
         )
       }
       Box(

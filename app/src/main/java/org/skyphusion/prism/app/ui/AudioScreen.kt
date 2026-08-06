@@ -70,7 +70,10 @@ fun AudioScreen(
   var sttAudioLabel by remember { mutableStateOf("") }
 
   DisposableEffect(Unit) {
-    onDispose { mic.cancel() }
+    onDispose {
+      mic.cancel()
+      vm.stopLiveStt()
+    }
   }
 
   LaunchedEffect(recording) {
@@ -105,6 +108,16 @@ fun AudioScreen(
         } else {
           vm.speechError = mic.errorMessage ?: "Could not start recording"
         }
+      } else {
+        vm.speechError = "Microphone permission denied. Enable it in Settings."
+      }
+    }
+
+  val requestMicLive =
+    rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+      if (granted) {
+        Haptics.light(view)
+        vm.startLiveStt()
       } else {
         vm.speechError = "Microphone permission denied. Enable it in Settings."
       }
@@ -270,10 +283,50 @@ fun AudioScreen(
         Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
       }
       Text(
-        "Record from the mic (AAC/m4a) or pick a file. Clip is sent as base64 to the plane.",
+        "Record from the mic (AAC/m4a) or pick a file. Clip is sent as base64 to the plane. " +
+          "Live STT streams PCM over WebSocket (plane only; beyond iOS app surface).",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
       )
+      // Live STT (plane WebSocket)
+      if (vm.liveSttRunning) {
+        Text(
+          "Live: ${vm.liveSttPartial.ifBlank { "listening…" }}",
+          style = MaterialTheme.typography.bodyMedium,
+          color = MaterialTheme.colorScheme.primary,
+        )
+        Button(
+          onClick = {
+            Haptics.light(view)
+            vm.stopLiveStt()
+          },
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Text("Stop live STT")
+        }
+      } else {
+        Button(
+          onClick = {
+            val ok =
+              ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED
+            if (!ok) {
+              requestMicLive.launch(Manifest.permission.RECORD_AUDIO)
+              return@Button
+            }
+            Haptics.light(view)
+            vm.startLiveStt()
+          },
+          enabled =
+            !vm.speechBusy &&
+              !recording &&
+              vm.hasDeviceKey &&
+              !vm.liveSttRunning,
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Text("Start live STT")
+        }
+      }
       if (recording) {
         Text(
           "Recording ${recordElapsed}s…",
