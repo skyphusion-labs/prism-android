@@ -399,6 +399,86 @@ data class VideoGenerationResponse(
   val error: ControlPlaneErrorBody? = null,
 )
 
+// --- Speech TTS (`POST /v1/audio/speech`) ---
+
+@Serializable
+data class SpeechGenerationRequest(
+  val model: String,
+  val input: String,
+)
+
+/** Plane TTS envelope: base64 audio (typically mp3). */
+@Serializable
+data class SpeechGenerationResponse(
+  val model: String? = null,
+  @SerialName("audio_base64") val audioBase64: String? = null,
+  val format: String? = null,
+  val error: ControlPlaneErrorBody? = null,
+) {
+  /** Decoded audio bytes when [audioBase64] is present (strips optional data: prefix). */
+  fun audioBytes(): ByteArray? {
+    val raw = audioBase64?.takeIf { it.isNotEmpty() } ?: return null
+    var s = raw
+    val idx = s.indexOf("base64,")
+    if (idx >= 0) s = s.substring(idx + "base64,".length)
+    return try {
+      java.util.Base64.getDecoder().decode(s)
+    } catch (_: IllegalArgumentException) {
+      null
+    }
+  }
+}
+
+// --- STT (`POST /v1/audio/transcriptions`) ---
+
+/** `audio` is raw base64 or a data: URL. */
+@Serializable
+data class TranscriptionRequest(
+  val model: String,
+  val audio: String,
+)
+
+@Serializable
+data class TranscriptionResponse(
+  val model: String? = null,
+  val text: String? = null,
+  val error: ControlPlaneErrorBody? = null,
+)
+
+// --- Music (`POST /v1/music/generations`) ---
+
+@Serializable
+data class MusicGenerationRequest(
+  val model: String,
+  val prompt: String,
+  val lyrics: String? = null,
+)
+
+/** Plane music envelope: `audio` is a URL or inline base64/data asset. */
+@Serializable
+data class MusicGenerationResponse(
+  val model: String? = null,
+  val audio: String? = null,
+  val error: ControlPlaneErrorBody? = null,
+) {
+  fun audioBytes(): ByteArray? {
+    val raw = audio?.takeIf { it.isNotEmpty() } ?: return null
+    if (raw.startsWith("http://") || raw.startsWith("https://")) return null
+    var s = raw
+    val idx = s.indexOf("base64,")
+    if (idx >= 0) s = s.substring(idx + "base64,".length)
+    return try {
+      java.util.Base64.getDecoder().decode(s)
+    } catch (_: IllegalArgumentException) {
+      null
+    }
+  }
+
+  val audioUrl: String?
+    get() =
+      audio?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+}
+
 /** `POST /v1/store/redeem` response (App Store or Google Play). */
 @Serializable
 data class StoreRedeemResponse(

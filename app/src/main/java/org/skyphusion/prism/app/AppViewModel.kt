@@ -91,9 +91,19 @@ class AppViewModel(
   var selectedModelId by mutableStateOf(secrets.get(SecretStoreKeys.SELECTED_CHAT_MODEL))
   var selectedImageModelId by mutableStateOf(secrets.get(SecretStoreKeys.SELECTED_IMAGE_MODEL))
   var selectedVideoModelId by mutableStateOf(secrets.get(SecretStoreKeys.SELECTED_VIDEO_MODEL))
+  var selectedSpeechModelId by mutableStateOf(secrets.get(SecretStoreKeys.SELECTED_SPEECH_MODEL))
+  var selectedSttModelId by mutableStateOf(secrets.get(SecretStoreKeys.SELECTED_STT_MODEL))
+  var selectedMusicModelId by mutableStateOf(secrets.get(SecretStoreKeys.SELECTED_MUSIC_MODEL))
   var balance by mutableStateOf<String?>(null)
   var turns = mutableStateListOf<ChatTurn>()
     private set
+
+  /** Local multi-session chats (device-only). */
+  var sessions = mutableStateListOf<ChatSession>()
+    private set
+  var currentSessionId by mutableStateOf<String?>(null)
+    private set
+  private val sessionStore = ChatSessionStore(appContext)
   var draft by mutableStateOf("")
   var useStream by mutableStateOf(
     secrets.get(SecretStoreKeys.USE_STREAM)?.let { it != "0" && !it.equals("false", true) } ?: true,
@@ -156,6 +166,26 @@ class AppViewModel(
   var canRetryLastChat by mutableStateOf(false)
     private set
 
+  // Speech / STT / music
+  var speechInput by mutableStateOf("")
+  var speechBusy by mutableStateOf(false)
+    private set
+  var speechError by mutableStateOf<String?>(null)
+  var speechStatus by mutableStateOf<String?>(null)
+  /** Last TTS audio as base64 (mp3). */
+  var lastSpeechBase64 by mutableStateOf<String?>(null)
+  var lastSpeechFormat by mutableStateOf<String?>("mp3")
+  var sttAudioDataUrl by mutableStateOf("")
+  var lastTranscript by mutableStateOf<String?>(null)
+  var musicPrompt by mutableStateOf("")
+  var musicLyrics by mutableStateOf("")
+  var musicBusy by mutableStateOf(false)
+    private set
+  var musicError by mutableStateOf<String?>(null)
+  var musicStatus by mutableStateOf<String?>(null)
+  var lastMusicUrl by mutableStateOf<String?>(null)
+  var lastMusicBase64 by mutableStateOf<String?>(null)
+
   /**
    * Playground conversation id when history is server-side (Worker).
    * Null in control-plane-only mode (client owns the transcript).
@@ -215,6 +245,27 @@ class AppViewModel(
         .filter { it.modality == "chat" || it.modality == null }
         .filter { !hideUnspendable || it.spendable != false }
 
+  val speechModels: List<ControlPlaneModel>
+    get() =
+      models
+        .filter { it.modality == "tts" }
+        .filter { !hideUnspendable || it.spendable != false }
+        .sortedBy { it.displayName ?: it.id }
+
+  val sttModels: List<ControlPlaneModel>
+    get() =
+      models
+        .filter { it.modality == "stt" }
+        .filter { !hideUnspendable || it.spendable != false }
+        .sortedBy { it.displayName ?: it.id }
+
+  val musicModels: List<ControlPlaneModel>
+    get() =
+      models
+        .filter { it.modality == "music" }
+        .filter { !hideUnspendable || it.spendable != false }
+        .sortedBy { it.displayName ?: it.id }
+
   val selectedChatModel: ControlPlaneModel?
     get() = chatModels.firstOrNull { it.id == selectedModelId } ?: chatModels.firstOrNull()
 
@@ -223,6 +274,19 @@ class AppViewModel(
 
   val selectedVideoModel: ControlPlaneModel?
     get() = videoModels.firstOrNull { it.id == selectedVideoModelId } ?: videoModels.firstOrNull()
+
+  val selectedSpeechModel: ControlPlaneModel?
+    get() = speechModels.firstOrNull { it.id == selectedSpeechModelId } ?: speechModels.firstOrNull()
+
+  val selectedSttModel: ControlPlaneModel?
+    get() = sttModels.firstOrNull { it.id == selectedSttModelId } ?: sttModels.firstOrNull()
+
+  val selectedMusicModel: ControlPlaneModel?
+    get() = musicModels.firstOrNull { it.id == selectedMusicModelId } ?: musicModels.firstOrNull()
+
+  val speechSpendPreview: String? get() = spendPreview(selectedSpeechModel)
+  val sttSpendPreview: String? get() = spendPreview(selectedSttModel)
+  val musicSpendPreview: String? get() = spendPreview(selectedMusicModel)
 
   /** Unit-price preview for image/video (catalog priceSnippet). */
   fun spendPreview(model: ControlPlaneModel?): String? {
@@ -255,6 +319,7 @@ class AppViewModel(
 
   init {
     startNetworkMonitor()
+    loadSessionsFromDisk()
     probePlaneHealth()
     if (hasDeviceKey) {
       refreshAccount()
@@ -376,6 +441,9 @@ class AppViewModel(
     secrets.set(SecretStoreKeys.SELECTED_CHAT_MODEL, selectedModelId)
     secrets.set(SecretStoreKeys.SELECTED_IMAGE_MODEL, selectedImageModelId)
     secrets.set(SecretStoreKeys.SELECTED_VIDEO_MODEL, selectedVideoModelId)
+    secrets.set(SecretStoreKeys.SELECTED_SPEECH_MODEL, selectedSpeechModelId)
+    secrets.set(SecretStoreKeys.SELECTED_STT_MODEL, selectedSttModelId)
+    secrets.set(SecretStoreKeys.SELECTED_MUSIC_MODEL, selectedMusicModelId)
     secrets.set(SecretStoreKeys.USE_STREAM, if (useStream) "1" else "0")
     secrets.set(SecretStoreKeys.HIDE_UNSPENDABLE, if (hideUnspendable) "1" else "0")
   }
@@ -556,7 +624,154 @@ class AppViewModel(
           }?.id
           ?: videoModels.firstOrNull()?.id
     }
+    if (selectedSpeechModelId == null || speechModels.none { it.id == selectedSpeechModelId }) {
+      selectedSpeechModelId =
+        speechModels.firstOrNull { it.id.contains("aura-2-en") }?.id
+          ?: speechModels.firstOrNull { it.id.contains("melotts") }?.id
+          ?: speechModels.firstOrNull()?.id
+    }
+    if (selectedSttModelId == null || sttModels.none { it.id == selectedSttModelId }) {
+      selectedSttModelId =
+        sttModels.firstOrNull { it.id.contains("whisper") }?.id
+          ?: sttModels.firstOrNull()?.id
+    }
+    if (selectedMusicModelId == null || musicModels.none { it.id == selectedMusicModelId }) {
+      selectedMusicModelId = musicModels.firstOrNull()?.id
+    }
     persistUIPrefs()
+  }
+
+  // --- Multi-session chats (device-local) ---
+
+  private fun loadSessionsFromDisk() {
+    val snap = sessionStore.load()
+    sessions.clear()
+    sessions.addAll(snap.sessions)
+    val id =
+      snap.currentId?.takeIf { cid -> sessions.any { it.id == cid } }
+        ?: sessions.firstOrNull()?.id
+    if (id != null) {
+      openSession(id, persist = false)
+    } else {
+      ensureCurrentSession()
+    }
+  }
+
+  private fun saveSessionsToDisk() {
+    sessionStore.save(sessions.toList(), currentSessionId)
+  }
+
+  private fun ensureCurrentSession() {
+    if (currentSessionId != null && sessions.any { it.id == currentSessionId }) return
+    val first = sessions.firstOrNull()
+    if (first != null) {
+      openSession(first.id, persist = false)
+      return
+    }
+    val s = ChatSession(selectedModelId = selectedModelId)
+    sessions.add(0, s)
+    currentSessionId = s.id
+    turns.clear()
+    compactState = null
+    saveSessionsToDisk()
+  }
+
+  /** Flush live transcript into [sessions] and disk. */
+  fun persistCurrentSession() {
+    val id = currentSessionId
+    if (id == null) {
+      if (turns.isEmpty()) return
+      val s =
+        ChatSession(
+          title = ChatSession.makeTitle(turns.toList()),
+          turns = turns.toList(),
+          selectedModelId = selectedModelId,
+          compact = compactState,
+        )
+      sessions.add(0, s)
+      currentSessionId = s.id
+      trimSessions()
+      saveSessionsToDisk()
+      return
+    }
+    val i = sessions.indexOfFirst { it.id == id }
+    if (i >= 0) {
+      val prev = sessions[i]
+      sessions[i] =
+        prev.copy(
+          title = ChatSession.makeTitle(turns.toList()),
+          turns = turns.toList(),
+          selectedModelId = selectedModelId,
+          compact = compactState,
+          updatedAtMs = System.currentTimeMillis(),
+        )
+      // Keep newest-first order
+      val updated = sessions.removeAt(i)
+      sessions.add(0, updated)
+    }
+    trimSessions()
+    saveSessionsToDisk()
+  }
+
+  private fun trimSessions() {
+    while (sessions.size > ChatSessionStore.SESSION_CAP) {
+      sessions.removeAt(sessions.lastIndex)
+    }
+  }
+
+  fun newChat() {
+    cancelChat()
+    persistCurrentSession()
+    // Drop empty "New chat" shells so the list does not fill with blanks.
+    currentSessionId?.let { id ->
+      val i = sessions.indexOfFirst { it.id == id }
+      if (i >= 0 && sessions[i].turns.isEmpty()) {
+        sessions.removeAt(i)
+      }
+    }
+    val s = ChatSession(selectedModelId = selectedModelId)
+    sessions.add(0, s)
+    currentSessionId = s.id
+    turns.clear()
+    compactState = null
+    errorMessage = null
+    clearChatFailure()
+    draft = ""
+    trimSessions()
+    saveSessionsToDisk()
+  }
+
+  fun openSession(id: String, persist: Boolean = true) {
+    if (persist) persistCurrentSession()
+    val s = sessions.firstOrNull { it.id == id } ?: return
+    currentSessionId = s.id
+    turns.clear()
+    turns.addAll(s.turns)
+    compactState = s.compact
+    if (s.selectedModelId != null && chatModels.any { it.id == s.selectedModelId }) {
+      selectedModelId = s.selectedModelId
+    }
+    clearChatFailure()
+    errorMessage = null
+    if (persist) saveSessionsToDisk()
+  }
+
+  fun deleteSession(id: String) {
+    val i = sessions.indexOfFirst { it.id == id }
+    if (i < 0) return
+    sessions.removeAt(i)
+    if (currentSessionId == id) {
+      val next = sessions.firstOrNull()
+      if (next != null) {
+        openSession(next.id, persist = false)
+      } else {
+        currentSessionId = null
+        turns.clear()
+        compactState = null
+        ensureCurrentSession()
+      }
+    }
+    saveSessionsToDisk()
   }
 
   fun refreshAccount() {
@@ -581,6 +796,7 @@ class AppViewModel(
     compactState = null
     // playgroundConversationId is server-owned; leave it until bindPlaygroundConversation(null).
     clearChatFailure()
+    persistCurrentSession()
   }
 
   /**
@@ -664,6 +880,7 @@ class AppViewModel(
       compactState = null
       banner = "Expanded -- next turn uses full history"
       errorMessage = null
+      persistCurrentSession()
       return
     }
     viewModelScope.launch {
@@ -757,6 +974,7 @@ class AppViewModel(
     banner =
       "Compacted $n turn${if (n == 1) "" else "s"}; keeping $k recent raw"
     refreshAccount()
+    persistCurrentSession()
   }
 
   private fun persistPlaygroundSession() {
@@ -895,6 +1113,7 @@ class AppViewModel(
             turns[assistantIndex] = assistant.copy(text = reply)
           }
           refreshAccount()
+          persistCurrentSession()
         } catch (e: Exception) {
           if (e is kotlinx.coroutines.CancellationException) throw e
           handleAuthError(e)
@@ -903,6 +1122,7 @@ class AppViewModel(
           if (turns.getOrNull(assistantIndex)?.text.isNullOrEmpty()) {
             turns.removeAt(assistantIndex)
           }
+          persistCurrentSession()
         } finally {
           isBusy = false
         }
@@ -1148,6 +1368,134 @@ class AppViewModel(
   /** For Play Billing redeem (Settings). Null when not enrolled. */
   fun planeClientOrNull(): ControlPlaneClient? =
     if (hasDeviceKey && !client.clientKey.isNullOrBlank()) client else null
+
+  // --- Speech / STT / music ---
+
+  fun generateSpeech() {
+    val modelId = selectedSpeechModelId ?: selectedSpeechModel?.id ?: return
+    val input = speechInput.trim()
+    if (input.isEmpty() || speechBusy) return
+    if (!isNetworkSatisfied) {
+      speechError = "No network connection. Reconnect and try again."
+      return
+    }
+    val model = speechModels.firstOrNull { it.id == modelId }
+    if (model?.spendable == false) {
+      speechError = "Model is not spendable on this plan"
+      return
+    }
+    viewModelScope.launch {
+      speechBusy = true
+      speechError = null
+      speechStatus = "Generating speech…"
+      try {
+        val res =
+          withContext(Dispatchers.IO) {
+            client.generateSpeech(model = modelId, input = input)
+          }
+        lastSpeechBase64 = res.audioBase64
+        lastSpeechFormat = res.format ?: "mp3"
+        speechStatus = "Speech ready"
+        refreshAccount()
+      } catch (e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
+        handleAuthError(e)
+        speechError = e.toUserMessage()
+        speechStatus = null
+      } finally {
+        speechBusy = false
+      }
+    }
+  }
+
+  /** Use assistant text as TTS input. */
+  fun speakText(text: String) {
+    speechInput = text.trim()
+    generateSpeech()
+  }
+
+  fun transcribeAudio() {
+    val modelId = selectedSttModelId ?: selectedSttModel?.id ?: return
+    val audio = sttAudioDataUrl.trim()
+    if (audio.isEmpty() || speechBusy) return
+    if (!isNetworkSatisfied) {
+      speechError = "No network connection. Reconnect and try again."
+      return
+    }
+    val model = sttModels.firstOrNull { it.id == modelId }
+    if (model?.spendable == false) {
+      speechError = "Model is not spendable on this plan"
+      return
+    }
+    viewModelScope.launch {
+      speechBusy = true
+      speechError = null
+      speechStatus = "Transcribing…"
+      try {
+        val res =
+          withContext(Dispatchers.IO) {
+            client.transcribe(model = modelId, audio = audio)
+          }
+        lastTranscript = res.text
+        speechStatus = "Transcript ready"
+        refreshAccount()
+      } catch (e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
+        handleAuthError(e)
+        speechError = e.toUserMessage()
+        speechStatus = null
+      } finally {
+        speechBusy = false
+      }
+    }
+  }
+
+  fun setSttAudioBase64(mime: String, base64: String) {
+    val m = mime.ifBlank { "audio/mpeg" }
+    sttAudioDataUrl = "data:$m;base64,$base64"
+  }
+
+  fun generateMusic() {
+    val modelId = selectedMusicModelId ?: selectedMusicModel?.id ?: return
+    val prompt = musicPrompt.trim()
+    if (prompt.isEmpty() || musicBusy) return
+    if (!isNetworkSatisfied) {
+      musicError = "No network connection. Reconnect and try again."
+      return
+    }
+    val model = musicModels.firstOrNull { it.id == modelId }
+    if (model?.spendable == false) {
+      musicError = "Model is not spendable on this plan"
+      return
+    }
+    viewModelScope.launch {
+      musicBusy = true
+      musicError = null
+      musicStatus = "Generating music…"
+      try {
+        val res =
+          withContext(Dispatchers.IO) {
+            client.generateMusic(
+              model = modelId,
+              prompt = prompt,
+              lyrics = musicLyrics.trim().ifEmpty { null },
+            )
+          }
+        lastMusicUrl = res.audioUrl
+        lastMusicBase64 =
+          res.audio?.takeIf { !it.startsWith("http://") && !it.startsWith("https://") }
+        musicStatus = "Music ready"
+        refreshAccount()
+      } catch (e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
+        handleAuthError(e)
+        musicError = e.toUserMessage()
+        musicStatus = null
+      } finally {
+        musicBusy = false
+      }
+    }
+  }
 
   private fun handleAuthError(e: Exception) {
     if (e is PrismError.ClientRevoked || e is PrismError.Unauthenticated) {

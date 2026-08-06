@@ -20,7 +20,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
@@ -65,6 +67,7 @@ import org.skyphusion.prism.app.Haptics
 fun ChatScreen(
   vm: AppViewModel,
   onOpenSettings: () -> Unit,
+  onOpenSessions: () -> Unit = {},
 ) {
   val listState = rememberLazyListState()
   val view = LocalView.current
@@ -101,6 +104,22 @@ fun ChatScreen(
           }
         },
         actions = {
+          IconButton(
+            onClick = {
+              Haptics.light(view)
+              onOpenSessions()
+            },
+          ) {
+            Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Chat list")
+          }
+          IconButton(
+            onClick = {
+              Haptics.light(view)
+              vm.newChat()
+            },
+          ) {
+            Icon(Icons.Default.Add, contentDescription = "New chat")
+          }
           IconButton(
             onClick = {
               Haptics.light(view)

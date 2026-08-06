@@ -21,6 +21,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import org.skyphusion.prism.app.ui.EnrollScreen
 import org.skyphusion.prism.app.ui.PlaneShell
 import org.skyphusion.prism.app.ui.PrismTheme
+import org.skyphusion.prism.app.ui.SessionListScreen
 import org.skyphusion.prism.app.ui.SettingsScreen
 
 class MainActivity : ComponentActivity() {
@@ -40,6 +41,7 @@ class MainActivity : ComponentActivity() {
                 ),
             )
           var showSettings by remember { mutableStateOf(false) }
+          var showSessions by remember { mutableStateOf(false) }
           val lifecycleOwner = LocalLifecycleOwner.current
 
           DisposableEffect(Unit) {
@@ -63,11 +65,17 @@ class MainActivity : ComponentActivity() {
                 vm = vm,
                 onBack = { showSettings = false },
               )
+            showSessions && vm.hasDeviceKey ->
+              SessionListScreen(
+                vm = vm,
+                onBack = { showSessions = false },
+              )
             !vm.hasDeviceKey -> EnrollScreen(vm)
             else ->
               PlaneShell(
                 vm = vm,
                 onOpenSettings = { showSettings = true },
+                onOpenSessions = { showSessions = true },
               )
           }
         }

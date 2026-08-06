@@ -57,4 +57,47 @@ class MediaCodecTest {
     assertTrue(prismUserFacingError(PrismError.HttpStatus(402, "quota_exhausted: low")).contains("balance"))
     assertTrue(prismUserFacingError(PrismError.Server("7003: User Input Error")).contains("Veo"))
   }
+
+  @Test
+  fun speechResponseDecodesAudio() {
+    val raw = java.util.Base64.getEncoder().encodeToString("hello-audio".toByteArray())
+    val res =
+      prismJson.decodeFromString(
+        SpeechGenerationResponse.serializer(),
+        """{"model":"@cf/deepgram/aura-2-en","audio_base64":"$raw","format":"mp3"}""",
+      )
+    assertEquals("@cf/deepgram/aura-2-en", res.model)
+    assertEquals("mp3", res.format)
+    assertEquals("hello-audio", res.audioBytes()?.decodeToString())
+  }
+
+  @Test
+  fun transcriptionResponse() {
+    val res =
+      prismJson.decodeFromString(
+        TranscriptionResponse.serializer(),
+        """{"model":"whisper","text":"hello world"}""",
+      )
+    assertEquals("hello world", res.text)
+  }
+
+  @Test
+  fun musicResponseUrlAndBase64() {
+    val url =
+      prismJson.decodeFromString(
+        MusicGenerationResponse.serializer(),
+        """{"audio":"https://cdn.example/m.mp3"}""",
+      )
+    assertEquals("https://cdn.example/m.mp3", url.audioUrl)
+    assertNull(url.audioBytes())
+
+    val raw = java.util.Base64.getEncoder().encodeToString("notes".toByteArray())
+    val b64 =
+      prismJson.decodeFromString(
+        MusicGenerationResponse.serializer(),
+        """{"audio":"$raw"}""",
+      )
+    assertNull(b64.audioUrl)
+    assertEquals("notes", b64.audioBytes()?.decodeToString())
+  }
 }

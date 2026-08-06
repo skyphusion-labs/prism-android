@@ -8,10 +8,9 @@ Guidance for agents working in this repository.
 [prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane). History / RAG /
 artifacts remain on [prism](https://github.com/skyphusion-labs/prism) (not yet wired in the app).
 
-**v0.3.5:** conversation compact (prism v0.175.7 / iOS 0.7.1). Plane uses client-side
-summary; kit `PrismClient` implements playground `.../compact` when conversation_id is bound.
-Prior 0.3.4: regenerate, offline, starters, paste enroll. Grok video **0.4.14+**; Play redeem
-**0.4.16+**.
+**v0.4.0:** multi-session chats + TTS/STT/music doors (iOS 0.7–0.8). Local sessions
+cap 50; Audio + Music tabs. Prior: compact (0.3.5), regenerate/offline (0.3.4).
+Grok video **0.4.14+**; Play redeem **0.4.16+**.
 
 ## Related
 
@@ -25,10 +24,10 @@ Prior 0.3.4: regenerate, offline, starters, paste enroll. Grok video **0.4.14+**
 ## Layout
 
 - `prism-kit` -- JVM (OkHttp, kotlinx.serialization, coroutines)
-  - `ControlPlaneClient` (chat SSE, image, video), `PrismClient` (playground compact),
+  - `ControlPlaneClient` (chat SSE, image, video, speech, STT, music), `PrismClient`,
     `ConversationCompact`, `HttpJson`, `SseParser`, `Models`, `SecretStore`
 - `app` -- Android application (Compose Material3)
-  - `EncryptedPrefsSecretStore`, `AppViewModel`, enroll / PlaneShell tabs / media / settings
+  - enroll / Chat·Image·Video·Audio·Music tabs / sessions / settings
 
 ## Commands
 
