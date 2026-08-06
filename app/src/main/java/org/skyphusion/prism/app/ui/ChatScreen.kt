@@ -1,6 +1,12 @@
 package org.skyphusion.prism.app.ui
 
+import android.Manifest
+import android.content.ClipDescription
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -29,13 +35,17 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -53,6 +63,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 // ExposedDropdownMenu is resolved via ExposedDropdownMenuBox scope
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -64,9 +75,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+import java.io.File
 import org.skyphusion.prism.app.AppViewModel
 import org.skyphusion.prism.app.ChatTurn
 import org.skyphusion.prism.app.Haptics
+import org.skyphusion.prism.app.MicRecorder
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -79,19 +94,114 @@ fun ChatScreen(
   val view = LocalView.current
   val context = LocalContext.current
   var refreshing by remember { mutableStateOf(false) }
+  var attachMenu by remember { mutableStateOf(false) }
+  var chatMicRecording by remember { mutableStateOf(false) }
+  val chatMic = remember { MicRecorder(context.applicationContext) }
+  var cameraUri by remember { mutableStateOf<Uri?>(null) }
+
+  DisposableEffect(Unit) {
+    onDispose { chatMic.cancel() }
+  }
+
+  fun attachFromUri(uri: Uri) {
+    try {
+      val bytes =
+        context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+          ?: return
+      vm.attachChatImageBytes(bytes)
+      Haptics.light(view)
+    } catch (e: Exception) {
+      vm.errorMessage = e.message ?: "Could not read image"
+    }
+  }
+
   val pickChatImage =
     rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-      if (uri == null) return@rememberLauncherForActivityResult
-      try {
-        val bytes =
-          context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-            ?: return@rememberLauncherForActivityResult
-        vm.attachChatImageBytes(bytes)
-        Haptics.light(view)
-      } catch (e: Exception) {
-        vm.errorMessage = e.message ?: "Could not read image"
+      if (uri != null) attachFromUri(uri)
+    }
+  val takePicture =
+    rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+      if (ok) cameraUri?.let { attachFromUri(it) }
+    }
+  val requestCamera =
+    rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+      if (granted) {
+        val f = File(context.cacheDir, "prism-chat-cam-${System.currentTimeMillis()}.jpg")
+        val uri =
+          FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", f)
+        cameraUri = uri
+        takePicture.launch(uri)
+      } else {
+        vm.errorMessage = "Camera permission denied."
       }
     }
+  val requestMicChat =
+    rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+      if (granted) {
+        if (chatMic.start()) {
+          chatMicRecording = true
+          Haptics.light(view)
+        } else {
+          vm.errorMessage = chatMic.errorMessage ?: "Could not start mic"
+        }
+      } else {
+        vm.errorMessage = "Microphone permission denied."
+      }
+    }
+
+  fun pasteClipboardImage() {
+    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    val clip = cm.primaryClip
+    if (clip == null || clip.itemCount == 0) {
+      vm.errorMessage = "No image on the clipboard."
+      return
+    }
+    val item = clip.getItemAt(0)
+    val uri = item.uri
+    if (uri != null) {
+      attachFromUri(uri)
+      return
+    }
+    // Some OEMs put image as URI in description only
+    val desc = clip.description
+    if (desc?.hasMimeType(ClipDescription.MIMETYPE_TEXT_URILIST) == true) {
+      val t = item.coerceToText(context)?.toString()
+      if (t != null && t.startsWith("content:")) {
+        attachFromUri(Uri.parse(t))
+        return
+      }
+    }
+    vm.errorMessage = "No image on the clipboard."
+  }
+
+  fun toggleChatMic() {
+    if (chatMicRecording) {
+      val cap = chatMic.stop()
+      chatMicRecording = false
+      if (cap != null) {
+        val (bytes, _) = cap
+        Haptics.success(view)
+        vm.sttToChatDraft(bytes, "audio/mp4")
+      } else {
+        vm.errorMessage = chatMic.errorMessage ?: "No audio captured"
+      }
+      return
+    }
+    val ok =
+      ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+        PackageManager.PERMISSION_GRANTED
+    if (!ok) {
+      requestMicChat.launch(Manifest.permission.RECORD_AUDIO)
+      return
+    }
+    if (chatMic.start()) {
+      chatMicRecording = true
+      Haptics.light(view)
+    } else {
+      vm.errorMessage = chatMic.errorMessage ?: "Could not start mic"
+    }
+  }
+
   LaunchedEffect(vm.turns.size, vm.turns.lastOrNull()?.text) {
     if (vm.turns.isNotEmpty()) {
       listState.animateScrollToItem(vm.turns.lastIndex)
@@ -103,6 +213,7 @@ fun ChatScreen(
   }
   val canSend =
     !vm.isBusy &&
+      !vm.chatSttBusy &&
       vm.selectedModelId != null &&
       (vm.draft.isNotBlank() || vm.draftImageDataUrls.isNotEmpty())
 
@@ -333,6 +444,30 @@ fun ChatScreen(
         }
       }
 
+      vm.chatSpendPreview?.let { preview ->
+        Text(
+          preview,
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+        )
+      }
+      if (vm.chatSttBusy) {
+        Text(
+          "Transcribing mic…",
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.primary,
+          modifier = Modifier.padding(horizontal = 12.dp),
+        )
+      }
+      if (chatMicRecording) {
+        Text(
+          "Recording… tap mic to stop and add to draft",
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.error,
+          modifier = Modifier.padding(horizontal = 12.dp),
+        )
+      }
       if (vm.draftImageDataUrls.isNotEmpty()) {
         Row(
           modifier =
@@ -357,18 +492,72 @@ fun ChatScreen(
         modifier =
           Modifier
             .fillMaxWidth()
-            .padding(12.dp),
+            .padding(horizontal = 4.dp, vertical = 8.dp),
         verticalAlignment = Alignment.Bottom,
       ) {
-        IconButton(
-          onClick = {
-            pickChatImage.launch(
-              PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+        Box {
+          IconButton(
+            onClick = { attachMenu = true },
+            enabled = !vm.isBusy && vm.draftImageDataUrls.size < 3,
+          ) {
+            Icon(Icons.Default.Image, contentDescription = "Attach photo")
+          }
+          DropdownMenu(expanded = attachMenu, onDismissRequest = { attachMenu = false }) {
+            DropdownMenuItem(
+              text = { Text("Photo library") },
+              onClick = {
+                attachMenu = false
+                pickChatImage.launch(
+                  PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                )
+              },
+              leadingIcon = { Icon(Icons.Default.Image, contentDescription = null) },
             )
-          },
-          enabled = !vm.isBusy && vm.draftImageDataUrls.size < 3,
+            DropdownMenuItem(
+              text = { Text("Take photo") },
+              onClick = {
+                attachMenu = false
+                val camOk =
+                  ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                    PackageManager.PERMISSION_GRANTED
+                if (camOk) {
+                  val f =
+                    File(context.cacheDir, "prism-chat-cam-${System.currentTimeMillis()}.jpg")
+                  val uri =
+                    FileProvider.getUriForFile(
+                      context,
+                      "${context.packageName}.fileprovider",
+                      f,
+                    )
+                  cameraUri = uri
+                  takePicture.launch(uri)
+                } else {
+                  requestCamera.launch(Manifest.permission.CAMERA)
+                }
+              },
+              leadingIcon = { Icon(Icons.Default.PhotoCamera, contentDescription = null) },
+            )
+            DropdownMenuItem(
+              text = { Text("Paste image") },
+              onClick = {
+                attachMenu = false
+                pasteClipboardImage()
+              },
+              leadingIcon = { Icon(Icons.Default.ContentPaste, contentDescription = null) },
+            )
+          }
+        }
+        IconButton(
+          onClick = { toggleChatMic() },
+          enabled = !vm.isBusy && !vm.chatSttBusy && vm.canUseMediaDoors,
         ) {
-          Icon(Icons.Default.Image, contentDescription = "Attach photo")
+          Icon(
+            Icons.Default.Mic,
+            contentDescription = if (chatMicRecording) "Stop mic STT" else "Mic to draft",
+            tint =
+              if (chatMicRecording) MaterialTheme.colorScheme.error
+              else MaterialTheme.colorScheme.onSurface,
+          )
         }
         OutlinedTextField(
           value = vm.draft,
@@ -376,7 +565,7 @@ fun ChatScreen(
           modifier = Modifier.weight(1f),
           placeholder = { Text("Message") },
           maxLines = 5,
-          enabled = !vm.isBusy,
+          enabled = !vm.isBusy && !vm.chatSttBusy,
         )
         if (vm.isBusy) {
           IconButton(onClick = { vm.cancelChat() }) {
@@ -544,52 +733,67 @@ private fun ModelPicker(vm: AppViewModel, modifier: Modifier = Modifier) {
   val label =
     selected?.let { m ->
       val price = m.priceSnippet()?.let { " · $it" } ?: ""
+      val tags = m.capabilityTags().take(3).joinToString(" · ").let { t ->
+        if (t.isEmpty()) "" else " · $t"
+      }
       val spend = if (m.spendable == false) " (unspendable)" else ""
-      (m.displayName ?: m.id) + price + spend
+      (m.displayName ?: m.id) + price + tags + spend
     } ?: "Select model"
 
-  ExposedDropdownMenuBox(
-    expanded = expanded,
-    onExpandedChange = { expanded = it },
-    modifier = modifier.fillMaxWidth(),
-  ) {
-    OutlinedTextField(
-      value = label,
-      onValueChange = {},
-      readOnly = true,
-      label = { Text("Model") },
-      trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-      modifier =
-        Modifier
-          .menuAnchor(MenuAnchorType.PrimaryNotEditable)
-          .fillMaxWidth(),
-    )
-    ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-      chatModels.forEach { m ->
-        val spendable = m.spendable != false
-        DropdownMenuItem(
-          text = {
-            Text(
-              (m.displayName ?: m.id) +
-                (m.priceSnippet()?.let { " · $it" } ?: "") +
-                if (!spendable) " · unspendable" else "",
-              color =
-                if (spendable) {
-                  MaterialTheme.colorScheme.onSurface
-                } else {
-                  MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
-                },
-            )
-          },
-          onClick = {
-            if (spendable) {
-              // Keep transcript when switching models (iOS parity).
-              vm.selectChatModel(m.id)
-              expanded = false
-            }
-          },
-          enabled = spendable,
-        )
+  Column(modifier = modifier.fillMaxWidth()) {
+    ExposedDropdownMenuBox(
+      expanded = expanded,
+      onExpandedChange = { expanded = it },
+      modifier = Modifier.fillMaxWidth(),
+    ) {
+      OutlinedTextField(
+        value = label,
+        onValueChange = {},
+        readOnly = true,
+        label = { Text("Model") },
+        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+        modifier =
+          Modifier
+            .menuAnchor(MenuAnchorType.PrimaryNotEditable)
+            .fillMaxWidth(),
+      )
+      ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        chatModels.forEach { m ->
+          val spendable = m.spendable != false
+          val tags = m.capabilityTags().joinToString(" · ")
+          DropdownMenuItem(
+            text = {
+              Column {
+                Text(
+                  (m.displayName ?: m.id) +
+                    (m.priceSnippet()?.let { " · $it" } ?: "") +
+                    if (!spendable) " · unspendable" else "",
+                  color =
+                    if (spendable) {
+                      MaterialTheme.colorScheme.onSurface
+                    } else {
+                      MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+                    },
+                )
+                if (tags.isNotEmpty()) {
+                  Text(
+                    tags,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  )
+                }
+              }
+            },
+            onClick = {
+              if (spendable) {
+                // Keep transcript when switching models (iOS parity).
+                vm.selectChatModel(m.id)
+                expanded = false
+              }
+            },
+            enabled = spendable,
+          )
+        }
       }
     }
   }

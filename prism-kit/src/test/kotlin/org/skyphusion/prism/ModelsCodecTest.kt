@@ -108,6 +108,44 @@ class ModelsCodecTest {
   }
 
   @Test
+  fun usagePeriodDetailLines() {
+    val u =
+      UsageSummary(
+        periodRequests = 12,
+        periodUnmeteredRequests = 2,
+        periodMicroUsd = 50_000,
+        periodReconciledMicroUsd = 48_000,
+        periodStart = "2026-08-01",
+        periodEnd = "2026-09-01",
+      )
+    val lines = u.periodDetailLines()
+    assertTrue(lines.any { it.contains("Requests this period: 12") })
+    assertTrue(lines.any { it.contains("Unmetered") })
+    assertTrue(lines.any { it.contains("Window:") })
+  }
+
+  @Test
+  fun modelCapabilityTags() {
+    val m =
+      ControlPlaneModel(
+        id = "vision-1",
+        streaming = true,
+        spendable = true,
+        capabilities = listOf("image-input"),
+        price =
+          ControlPlaneTokenPrice(
+            inputMicroUsdPerMTok = 1_000_000,
+            outputMicroUsdPerMTok = 2_000_000,
+          ),
+      )
+    assertTrue(m.supportsVision())
+    val tags = m.capabilityTags()
+    assertTrue(tags.contains("vision"))
+    assertTrue(tags.contains("stream"))
+    assertTrue(tags.contains("token"))
+  }
+
+  @Test
   fun meterHeadersParse() {
     val meters =
       PrismMeterHeaders.from(

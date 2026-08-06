@@ -8,8 +8,9 @@ Guidance for agents working in this repository.
 [prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane). History / RAG /
 artifacts remain on [prism](https://github.com/skyphusion-labs/prism) (not yet wired in the app).
 
-**v0.6.0:** iOS 0.8.2 parity -- vision attach, Seedance default, playground sync,
-session export, stream fallback, onboarding, live STT (Android-only plane door).
+**v0.7.0:** iOS 0.8.3 parity -- Usage screen, chat rate preview + capability tags,
+camera/clipboard attach, mic→STT draft, video completion notification, expanded
+onboarding. Prior 0.6.0: vision multiparty, Seedance, stream fallback, sync, live STT.
 Grok video **0.4.14+**; Play redeem **0.4.16+**; plane vision multiparty **0.4.23+**.
 
 ## Related

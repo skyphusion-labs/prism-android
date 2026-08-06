@@ -26,6 +26,7 @@ private enum class MoreDest {
   Hub,
   Audio,
   Music,
+  Usage,
 }
 
 @Composable
@@ -89,6 +90,7 @@ fun PlaneShell(
                 vm = vm,
                 onOpenAudio = { moreDest = MoreDest.Audio.name },
                 onOpenMusic = { moreDest = MoreDest.Music.name },
+                onOpenUsage = { moreDest = MoreDest.Usage.name },
                 onOpenSettings = onOpenSettings,
               )
             MoreDest.Audio ->
@@ -101,6 +103,11 @@ fun PlaneShell(
               MusicScreen(
                 vm = vm,
                 onOpenSettings = onOpenSettings,
+                onBack = { moreDest = MoreDest.Hub.name },
+              )
+            MoreDest.Usage ->
+              UsageScreen(
+                vm = vm,
                 onBack = { moreDest = MoreDest.Hub.name },
               )
           }

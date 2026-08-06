@@ -168,6 +168,14 @@ class AppViewModel(
   var serverSyncBusy by mutableStateOf(false)
     private set
   var serverSyncMessage by mutableStateOf<String?>(null)
+  /** Full period usage from GET /v1/usage (Usage screen). */
+  var usageDetail by mutableStateOf<org.skyphusion.prism.UsageSummary?>(null)
+    private set
+  var usageBusy by mutableStateOf(false)
+    private set
+  var usageError by mutableStateOf<String?>(null)
+  var chatSttBusy by mutableStateOf(false)
+    private set
   var useStream by mutableStateOf(
     secrets.get(SecretStoreKeys.USE_STREAM)?.let { it != "0" && !it.equals("false", true) } ?: true,
   )
@@ -418,7 +426,30 @@ class AppViewModel(
 
   val imageSpendPreview: String? get() = spendPreview(selectedImageModel)
   val videoSpendPreview: String? get() = spendPreview(selectedVideoModel)
-  val chatSpendPreview: String? get() = spendPreview(selectedChatModel)
+
+  /**
+   * Chat send cost hint + capability line (token rates are not per-request exact).
+   * iOS chatSpendPreview 0.8.3.
+   */
+  val chatSpendPreview: String?
+    get() {
+      val m = selectedChatModel ?: return null
+      val parts = mutableListOf<String>()
+      m.priceSnippet()?.let { p ->
+        parts.add(if (p == "included") "Rate: included" else "Rate: $p")
+      }
+      if (m.supportsVision()) {
+        parts.add(
+          if (draftImageDataUrls.isEmpty()) "vision-capable" else "vision attach · metered",
+        )
+      } else if (draftImageDataUrls.isNotEmpty()) {
+        parts.add("warning: model may not support vision")
+      }
+      if (useStream && m.streaming != false) parts.add("stream on")
+      m.tier?.takeIf { it.isNotBlank() }?.let { parts.add(it) }
+      if (parts.isEmpty()) return null
+      return "Send: " + parts.joinToString(" · ")
+    }
 
   /** Completed user/assistant pairs eligible for compact (web bar: need 3+). */
   val completedChatPairCount: Int
@@ -1177,6 +1208,103 @@ class AppViewModel(
     }
   }
 
+  /** Full period usage for the Usage screen (`GET /v1/usage`). */
+  fun refreshUsageDetail() {
+    if (!hasDeviceKey) {
+      usageError = "Enroll a device key first."
+      return
+    }
+    viewModelScope.launch {
+      usageBusy = true
+      usageError = null
+      try {
+        val u =
+          withContext(Dispatchers.IO) {
+            client.usage()
+          }
+        usageDetail = u
+        planeUsageLines.clear()
+        planeUsageLines.addAll(u.dualPoolLines())
+        balance = u.balanceDescription()
+      } catch (e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
+        handleAuthError(e)
+        usageError = e.toUserMessage()
+      } finally {
+        usageBusy = false
+      }
+    }
+  }
+
+  /** Paste image bytes from system clipboard into chat draft (if any). */
+  fun pasteChatImageFromClipboard(bytes: ByteArray?): Boolean {
+    if (bytes == null || bytes.isEmpty()) {
+      errorMessage = "No image on the clipboard."
+      return false
+    }
+    attachChatImageBytes(bytes)
+    return true
+  }
+
+  /** Append last STT transcript into the chat draft. */
+  fun applyLastTranscriptToDraft() {
+    val t = lastTranscript?.trim().orEmpty()
+    if (t.isEmpty()) {
+      errorMessage = "No transcript yet. Hold the mic to record, or use More → Audio."
+      return
+    }
+    draft = if (draft.isEmpty()) t else "$draft $t"
+    banner = "Transcript added to draft"
+  }
+
+  /**
+   * Transcribe recorded audio and append to the chat draft (composer mic).
+   * Uses selected STT model on the control plane.
+   */
+  fun sttToChatDraft(audioBytes: ByteArray, mime: String = "audio/mp4") {
+    if (!canUseMediaDoors) {
+      errorMessage = "Control plane + device key required for speech-to-text."
+      return
+    }
+    if (!isNetworkSatisfied) {
+      errorMessage = "No network connection."
+      return
+    }
+    val modelId = selectedSttModelId ?: selectedSttModel?.id
+    if (modelId == null) {
+      errorMessage = "No STT model available."
+      return
+    }
+    if (chatSttBusy || speechBusy) return
+    val b64 = android.util.Base64.encodeToString(audioBytes, android.util.Base64.NO_WRAP)
+    val audio = "data:${mime.ifBlank { "audio/mp4" }};base64,$b64"
+    viewModelScope.launch {
+      chatSttBusy = true
+      errorMessage = null
+      try {
+        val res =
+          withContext(Dispatchers.IO) {
+            client.transcribe(model = modelId, audio = audio)
+          }
+        val t = res.text?.trim().orEmpty()
+        if (t.isEmpty()) {
+          errorMessage = "Empty transcript."
+          return@launch
+        }
+        lastTranscript = t
+        draft = if (draft.isEmpty()) t else "$draft $t"
+        banner = "Transcript added to draft"
+        refreshAccount()
+      } catch (e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
+        handleAuthError(e)
+        errorMessage = e.toUserMessage()
+      } finally {
+        chatSttBusy = false
+      }
+    }
+  }
+
   fun clearChat() {
     turns.clear()
     compactState = null
@@ -1704,7 +1832,9 @@ class AppViewModel(
       viewModelScope.launch {
         mediaBusy = true
         mediaError = null
-        mediaStatus = "Generating video (can take 1–3 min)…"
+        mediaStatus =
+          "Generating $modelId · often 1-3 min. You can leave this tab; result stays here."
+        NotificationHelper.ensureChannels(appContext)
         startMediaTimer()
         try {
           val res =
@@ -1716,7 +1846,7 @@ class AppViewModel(
               )
             }
           lastVideoUrl = res.video
-          mediaStatus = "Video ready"
+          mediaStatus = "Video ready · ${mediaElapsedSeconds}s"
           pushMediaHistory(
             MediaHistoryItem(
               kind = MediaKind.Video,
@@ -1725,12 +1855,24 @@ class AppViewModel(
               videoUrl = res.video,
             ),
           )
+          NotificationHelper.notifyMedia(
+            appContext,
+            title = "Video ready",
+            body = "$modelId finished in ${mediaElapsedSeconds}s",
+            success = true,
+          )
           refreshAccount()
         } catch (e: Exception) {
           if (e is kotlinx.coroutines.CancellationException) throw e
           handleAuthError(e)
           mediaError = e.toUserMessage()
-          mediaStatus = null
+          mediaStatus = "Failed after ${mediaElapsedSeconds}s · prompt kept for Retry"
+          NotificationHelper.notifyMedia(
+            appContext,
+            title = "Video failed",
+            body = mediaError ?: "Video failed",
+            success = false,
+          )
         } finally {
           stopMediaTimer()
           mediaBusy = false

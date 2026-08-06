@@ -80,6 +80,33 @@ data class ControlPlaneModel(
 
   fun requiresImageInput(): Boolean =
     capabilities.orEmpty().contains("image-input-required")
+
+  /** Vision-capable chat models (image_url multiparty). */
+  fun supportsVision(): Boolean {
+    val caps = capabilities.orEmpty()
+    return caps.any { it.contains("vision", ignoreCase = true) } ||
+      caps.contains("image-input") ||
+      acceptsImageInput()
+  }
+
+  /** Short capability tags for pickers (vision, stream, tier, unit). */
+  fun capabilityTags(): List<String> {
+    val tags = mutableListOf<String>()
+    if (supportsVision()) tags.add("vision")
+    if (streaming == true) tags.add("stream")
+    tier?.takeIf { it.isNotBlank() }?.let { tags.add(it) }
+    val p = priceSnippet()
+    if (p != null) {
+      when {
+        p.contains("/request") || p.contains("/unit") || p.contains("/image") ||
+          p.contains("/video") -> tags.add("unit")
+        p.contains("MTok") || p.contains("/M") -> tags.add("token")
+        p == "included" -> tags.add("included")
+      }
+    }
+    if (spendable == false) tags.add("unspendable")
+    return tags
+  }
 }
 
 @Serializable
@@ -132,8 +159,14 @@ data class UsageSummary(
   @SerialName("spendable_remaining_micro_usd") val spendableRemainingMicroUsd: Long? = null,
   val overage: Boolean? = null,
   val period: String? = null,
+  @SerialName("period_start") val periodStart: String? = null,
+  @SerialName("period_end") val periodEnd: String? = null,
   @SerialName("period_micro_usd") val periodMicroUsd: Long? = null,
   @SerialName("period_requests") val periodRequests: Long? = null,
+  @SerialName("period_unmetered_requests") val periodUnmeteredRequests: Long? = null,
+  @SerialName("period_adjust_spend_micro_usd") val periodAdjustSpendMicroUsd: Long? = null,
+  @SerialName("period_adjust_credit_micro_usd") val periodAdjustCreditMicroUsd: Long? = null,
+  @SerialName("period_reconciled_micro_usd") val periodReconciledMicroUsd: Long? = null,
 ) {
   /** Human-readable balance line (micro-USD -> USD). */
   fun balanceDescription(): String {
@@ -146,30 +179,58 @@ data class UsageSummary(
     return "usage unknown"
   }
 
-  /** Multi-line dual-pool summary for Settings / More hub (iOS dualPoolLines). */
+  private fun usd(micro: Long): String = String.format("$%.4f", micro / 1_000_000.0)
+
+  /** Multi-line dual-pool summary for Settings / Usage / More hub. */
   fun dualPoolLines(): List<String> {
     val lines = mutableListOf<String>()
     val spendable = spendableRemainingMicroUsd ?: remainingMicroUsd
     if (spendable != null) {
-      lines.add(String.format("Spendable: $%.4f", spendable / 1_000_000.0))
+      lines.add("Spendable: ${usd(spendable)}")
     }
     remainingMicroUsd?.let {
-      lines.add(String.format("Prepaid remaining: $%.4f", it / 1_000_000.0))
+      lines.add("Prepaid remaining: ${usd(it)}")
     } ?: creditMicroUsd?.let {
-      lines.add(String.format("Prepaid credit: $%.4f", it / 1_000_000.0))
+      lines.add("Prepaid credit (lifetime grant): ${usd(it)}")
+    }
+    spentMicroUsd?.let {
+      lines.add("Prepaid spent (lifetime): ${usd(it)}")
     }
     allowanceRemainingMicroUsd?.let {
-      lines.add(String.format("Monthly remaining: $%.4f", it / 1_000_000.0))
+      lines.add("Monthly remaining: ${usd(it)}")
     } ?: run {
       val incl = monthlyIncludedMicroUsd
       val spent = allowanceSpentMicroUsd
       if (incl != null && spent != null) {
-        val rem = (incl - spent).coerceAtLeast(0)
-        lines.add(String.format("Monthly remaining: $%.4f", rem / 1_000_000.0))
+        lines.add("Monthly remaining: ${usd((incl - spent).coerceAtLeast(0))}")
       }
+    }
+    monthlyIncludedMicroUsd?.let {
+      lines.add("Monthly included: ${usd(it)}")
     }
     period?.let { lines.add("Period: $it") }
     if (overage == true) lines.add("Overage: yes")
+    return lines
+  }
+
+  /** Period meter detail for the Usage screen. */
+  fun periodDetailLines(): List<String> {
+    val lines = mutableListOf<String>()
+    periodRequests?.let { lines.add("Requests this period: $it") }
+    periodUnmeteredRequests?.takeIf { it > 0 }?.let {
+      lines.add("Unmetered requests: $it (plane could not price; still served)")
+    }
+    periodMicroUsd?.let { lines.add("Meter estimate: ${usd(it)}") }
+    periodReconciledMicroUsd?.let { lines.add("Reconciled spend: ${usd(it)}") }
+    periodAdjustSpendMicroUsd?.takeIf { it > 0 }?.let {
+      lines.add("Reconcile +spend: ${usd(it)}")
+    }
+    periodAdjustCreditMicroUsd?.takeIf { it > 0 }?.let {
+      lines.add("Reconcile credits: ${usd(it)}")
+    }
+    if (periodStart != null && periodEnd != null) {
+      lines.add("Window: $periodStart → $periodEnd")
+    }
     return lines
   }
 }
