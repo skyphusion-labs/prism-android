@@ -36,3 +36,14 @@ AGP is also bumped (see root plugins block) so Google's pin moves forward when i
 ./gradlew :app:assembleRelease
 ./gradlew :prism-kit:test
 ```
+
+## Follow-up forces (protobuf / commons-compress)
+
+Also forced on the AGP build classpath:
+
+| Module | Version |
+|--------|---------|
+| `com.google.protobuf:protobuf-java` (+ kotlin/util) | `3.25.5` |
+| `org.apache.commons:commons-compress` | `1.26.0` |
+
+Same residual story as Netty: tooling only, not app runtime.
