@@ -36,6 +36,7 @@ import org.skyphusion.prism.PrismClient
 import org.skyphusion.prism.PrismError
 import org.skyphusion.prism.SecretStore
 import org.skyphusion.prism.SecretStoreKeys
+import org.skyphusion.prism.VideoClipDuration
 import org.skyphusion.prism.prismUserFacingError
 
 /** Inference backend (iOS BackendKind). Product default is control plane. */
@@ -266,6 +267,11 @@ class AppViewModel(
   var imageImageRef by mutableStateOf("")
   var videoPrompt by mutableStateOf("")
   var videoImageRef by mutableStateOf("")
+  /**
+   * User-chosen clip length in seconds. Clamped to the selected video model's CF range
+   * on model change and on generate (iOS `videoDurationSeconds` parity).
+   */
+  var videoDurationSeconds by mutableStateOf(5)
   var mediaBusy by mutableStateOf(false)
     private set
   var mediaStatus by mutableStateOf<String?>(null)
@@ -1067,6 +1073,7 @@ class AppViewModel(
           }?.id
           ?: videos.firstOrNull()?.id
     }
+    clampVideoDurationToSelectedModel()
     val speech =
       models.filter { it.modality == "tts" }.filter { !hideUnspendable || it.spendable != false }
     val stt =
@@ -1880,6 +1887,23 @@ class AppViewModel(
       }
   }
 
+  /** Snap [videoDurationSeconds] into the selected model's legal range. */
+  fun clampVideoDurationToSelectedModel() {
+    val mid = selectedVideoModelId ?: return
+    videoDurationSeconds = VideoClipDuration.limits(mid).clamp(videoDurationSeconds)
+  }
+
+  fun selectVideoModel(modelId: String) {
+    selectedVideoModelId = modelId
+    clampVideoDurationToSelectedModel()
+    persistUIPrefs()
+  }
+
+  fun setVideoDurationSeconds(seconds: Int) {
+    val mid = selectedVideoModelId.orEmpty()
+    videoDurationSeconds = VideoClipDuration.limits(mid).clamp(seconds)
+  }
+
   fun generateVideo() {
     val modelId = selectedVideoModelId ?: return
     val prompt = videoPrompt.trim()
@@ -1898,13 +1922,16 @@ class AppViewModel(
       mediaError = "This model needs a first-frame image (i2v)."
       return
     }
+    val durationSec = VideoClipDuration.limits(modelId).clamp(videoDurationSeconds)
+    videoDurationSeconds = durationSec
+    val durationWire = VideoClipDuration.wire(modelId, durationSec)
     mediaJob?.cancel()
     mediaJob =
       viewModelScope.launch {
         mediaBusy = true
         mediaError = null
         mediaStatus =
-          "Generating $modelId · often 1-4 min. Stay in Prism if you can; " +
+          "Generating $modelId · ${durationSec}s clip · often 1-4 min. Stay in Prism if you can; " +
             "job continues on the plane after accept (lock OK once job id shows)."
         NotificationHelper.ensureChannels(appContext)
         startMediaTimer()
@@ -1916,6 +1943,7 @@ class AppViewModel(
                 prompt = prompt.ifEmpty { null },
                 image = image,
                 async = true,
+                duration = durationWire,
               )
             }
           if (res.isAsyncAccept) {

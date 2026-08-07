@@ -733,7 +733,8 @@ data class VideoGenerationRequest(
   val async: Boolean? = null,
   /**
    * Clip length for CF. **Type is model-specific:** integer seconds for most models,
-   * string like `"8s"` for Google Veo. Use [VideoClipDuration.forModel] when omitting.
+   * string like `"8s"` for Google Veo. Use [VideoClipDuration.wire] for a user choice,
+   * or [VideoClipDuration.forModel] for the model default when omitting.
    */
   val duration: JsonElement? = null,
 )
