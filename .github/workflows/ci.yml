@@ -42,3 +42,27 @@ jobs:
       - name: Accept licenses
         run: yes | sdkmanager --licenses >/dev/null || true
       - run: ./gradlew :app:assembleDebug --no-daemon
+
+  # `ci` is a REQUIRED status check in the org `aviation-grade-main-org` ruleset and is
+  # matched by STRING against the check-run name, which is this job's `name:`. It is an
+  # aggregate, not a second copy of the work: `kit` and `app` do the building and this
+  # job asserts both succeeded, so the required context reports on every PR head while
+  # the two component results stay separately visible in the checks panel.
+  #
+  # `if: ${{ !cancelled() }}` plus an explicit `test` per component is load-bearing and
+  # is the canonical shape (postern/.github/workflows/ci.yml, runbook
+  # fleet-chezmoi docs/runbooks/aviation-grade-main.md section 4). A bare `needs:` with
+  # no `if:` would make this job SKIP when a component fails, and a skipped job still
+  # produces a check run whose conclusion SATISFIES a required context: the gate would
+  # go green on exactly the failure it exists to catch.
+  ci:
+    name: ci
+    needs: [kit, app]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require all component jobs
+        run: |
+          test "${{ needs.kit.result }}" = "success"
+          test "${{ needs.app.result }}" = "success"
