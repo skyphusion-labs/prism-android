@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
+import okhttp3.OkHttpClient
 
 /**
  * Client for the **Prism control plane** (metered inference, `play-proxy.skyphusion.org`).
@@ -30,6 +31,10 @@ class ControlPlaneClient(
 
   private val mediaHttp: HttpJson =
     nonChatHttp ?: HttpJson(baseUrl = http.root, client = HttpJson.nonChatClient())
+
+  /** Short client for async 202 enqueue (job id only). */
+  private val enqueueHttp: HttpJson =
+    HttpJson(baseUrl = http.root, client = HttpJson.asyncEnqueueClient())
 
   constructor(
     baseUrl: String = PRODUCTION_BASE_URL,
@@ -227,18 +232,30 @@ class ControlPlaneClient(
 
   // --- Image / video (unit-priced) ---
 
-  /** `POST /v1/images/generations` -- `data[].b64_json` and/or `data[].url`. */
+  /**
+   * `POST /v1/images/generations` -- `data[].b64_json`/`url`, or 202 job (gpt-image-2 / async).
+   * When [ImageGenerationRequest.async] is true, sends Prefer: respond-async.
+   */
   fun generateImage(request: ImageGenerationRequest): ImageGenerationResponse {
     val key = requireKey()
+    val async = request.async == true
+    val client = if (async) enqueueHttp else mediaHttp
+    val headers = if (async) mapOf("Prefer" to "respond-async") else emptyMap()
     val (body, _) =
-      mediaHttp.send<ImageGenerationRequest, ImageGenerationResponse>(
+      client.send<ImageGenerationRequest, ImageGenerationResponse>(
         "POST",
         "/v1/images/generations",
         body = request,
         bearer = key,
+        headers = headers,
+        okStatuses = (200..299).toSet(),
       )
     body.error?.let { err ->
       throw PrismError.Server(err.message ?: err.code ?: "image generation error")
+    }
+    if (body.isAsyncAccept) {
+      if (body.id.isNullOrBlank()) throw PrismError.Server("Async image job missing id")
+      return body
     }
     if (body.firstBase64 == null && body.firstDisplayUrl == null) {
       throw PrismError.Server("Empty image payload")
@@ -246,52 +263,201 @@ class ControlPlaneClient(
     return body
   }
 
-  fun generateImage(model: String, prompt: String, image: String? = null): ImageGenerationResponse =
-    generateImage(ImageGenerationRequest(model = model, prompt = prompt, image = image))
+  fun generateImage(
+    model: String,
+    prompt: String,
+    image: String? = null,
+    async: Boolean? = null,
+  ): ImageGenerationResponse =
+    generateImage(
+      ImageGenerationRequest(model = model, prompt = prompt, image = image, async = async),
+    )
 
-  /** `POST /v1/videos/generations` -- `video` is a URL or inline asset. */
+  /**
+   * `POST /v1/videos/generations`. Prefer [async] true (plane 0.4.29+): 202 + job id.
+   * Poll with [getJob] / [waitForJob].
+   */
   fun generateVideo(request: VideoGenerationRequest): VideoGenerationResponse {
     val key = requireKey()
+    val async = request.async == true
+    val client = if (async) enqueueHttp else mediaHttp
+    val headers = if (async) mapOf("Prefer" to "respond-async") else emptyMap()
+    // Always send model-correct duration (int vs "8s") so plane/CF get a valid clip length.
+    val payload =
+      if (request.duration != null) {
+        request
+      } else {
+        request.copy(duration = VideoClipDuration.forModel(request.model))
+      }
     val (body, _) =
-      mediaHttp.send<VideoGenerationRequest, VideoGenerationResponse>(
+      client.send<VideoGenerationRequest, VideoGenerationResponse>(
         "POST",
         "/v1/videos/generations",
-        body = request,
+        body = payload,
         bearer = key,
+        headers = headers,
+        okStatuses = (200..299).toSet(),
       )
     body.error?.let { err ->
       throw PrismError.Server(err.message ?: err.code ?: "video generation error")
+    }
+    if (body.isAsyncAccept) {
+      if (body.id.isNullOrBlank()) throw PrismError.Server("Async video job missing id")
+      return body
     }
     if (body.video.isNullOrEmpty()) throw PrismError.Server("Empty video payload")
     return body
   }
 
-  fun generateVideo(model: String, prompt: String? = null, image: String? = null): VideoGenerationResponse =
-    generateVideo(VideoGenerationRequest(model = model, prompt = prompt, image = image))
+  fun generateVideo(
+    model: String,
+    prompt: String? = null,
+    image: String? = null,
+    async: Boolean = true,
+    /** Clip length in seconds; wired per-model (int or Veo "Ns"). Null = model default. */
+    durationSeconds: Int? = null,
+  ): VideoGenerationResponse =
+    generateVideo(
+      VideoGenerationRequest(
+        model = model,
+        prompt = prompt,
+        image = image,
+        async = async,
+        duration =
+          if (durationSeconds != null) {
+            VideoClipDuration.wire(model, durationSeconds)
+          } else {
+            VideoClipDuration.forModel(model)
+          },
+      ),
+    )
+
+  /** `GET /v1/jobs/:id` -- poll async video/music/speech job (plane 0.4.29+). */
+  fun getJob(id: String): AsyncJobResponse {
+    val key = requireKey()
+    val encoded = id.trim()
+    require(encoded.isNotEmpty()) { "job id required" }
+    val (body, _) =
+      enqueueHttp.send<Unit?, AsyncJobResponse>(
+        "GET",
+        "/v1/jobs/$encoded",
+        body = null,
+        bearer = key,
+      )
+    return body
+  }
+
+  /**
+   * Poll until succeeded/failed or [timeoutMs] elapses.
+   * @throws PrismError.Server if still non-terminal after timeout
+   */
+  fun waitForJob(
+    id: String,
+    pollIntervalMs: Long = 4_000,
+    timeoutMs: Long = 420_000,
+  ): AsyncJobResponse {
+    val deadline = System.currentTimeMillis() + timeoutMs
+    var last: AsyncJobResponse? = null
+    while (System.currentTimeMillis() < deadline) {
+      val job = getJob(id)
+      last = job
+      if (job.isTerminal) return job
+      try {
+        Thread.sleep(pollIntervalMs)
+      } catch (_: InterruptedException) {
+        Thread.currentThread().interrupt()
+        throw PrismError.Transport("Job poll interrupted")
+      }
+    }
+    last?.let {
+      if (!it.isTerminal) {
+        throw PrismError.Server("Job still running on the plane")
+      }
+      return it
+    }
+    throw PrismError.Server("Job $id timed out waiting for completion")
+  }
+
+  /**
+   * Probe media URL until HEAD/GET succeeds (Grok R2 race after ZDR).
+   * Returns true when the URL responds 2xx (or 206 Partial).
+   */
+  fun waitForMediaReady(
+    mediaUrl: String,
+    attempts: Int = 12,
+    delayMs: Long = 2_500,
+  ): Boolean {
+    val url = mediaUrl.trim()
+    if (url.isEmpty() || (!url.startsWith("http://") && !url.startsWith("https://"))) {
+      return true
+    }
+    val probe =
+      OkHttpClient.Builder()
+        .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
+    repeat(attempts) { i ->
+      try {
+        val head =
+          okhttp3.Request.Builder()
+            .url(url)
+            .head()
+            .header("Range", "bytes=0-1")
+            .build()
+        probe.newCall(head).execute().use { res ->
+          if (res.code in 200..299 || res.code == 206) return true
+        }
+      } catch (_: Exception) {
+        // retry
+      }
+      if (i < attempts - 1) {
+        try {
+          Thread.sleep(delayMs)
+        } catch (_: InterruptedException) {
+          Thread.currentThread().interrupt()
+          return false
+        }
+      }
+    }
+    return false
+  }
 
   // --- Speech TTS / STT / music (unit-priced) ---
 
-  /** `POST /v1/audio/speech` -- metered TTS; returns base64 audio. */
+  /** `POST /v1/audio/speech` -- metered TTS. Prefer [async] true (plane 0.4.32+). */
   fun generateSpeech(request: SpeechGenerationRequest): SpeechGenerationResponse {
     val key = requireKey()
+    val async = request.async == true
+    val client = if (async) enqueueHttp else mediaHttp
+    val headers = if (async) mapOf("Prefer" to "respond-async") else emptyMap()
     val (body, _) =
-      mediaHttp.send<SpeechGenerationRequest, SpeechGenerationResponse>(
+      client.send<SpeechGenerationRequest, SpeechGenerationResponse>(
         "POST",
         "/v1/audio/speech",
         body = request,
         bearer = key,
+        headers = headers,
+        okStatuses = (200..299).toSet(),
       )
     body.error?.let { err ->
       throw PrismError.Server(err.message ?: err.code ?: "speech generation error")
+    }
+    if (body.isAsyncAccept) {
+      if (body.id.isNullOrBlank()) throw PrismError.Server("Async speech job missing id")
+      return body
     }
     if (body.audioBytes() == null) throw PrismError.Server("Empty speech audio payload")
     return body
   }
 
-  fun generateSpeech(model: String, input: String): SpeechGenerationResponse =
-    generateSpeech(SpeechGenerationRequest(model = model, input = input))
+  fun generateSpeech(model: String, input: String, async: Boolean = true): SpeechGenerationResponse =
+    generateSpeech(SpeechGenerationRequest(model = model, input = input, async = async))
 
-  /** `POST /v1/audio/transcriptions` -- metered STT; [audio] is base64 or data: URL. */
+  /**
+   * `POST /v1/audio/transcriptions` -- metered STT; [audio] is base64 or data: URL (JSON body).
+   * Silence / empty transcript is a successful 200 with blank [TranscriptionResponse.text]
+   * (plane returns text:""). Callers that need non-empty speech should check text themselves.
+   */
   fun transcribe(request: TranscriptionRequest): TranscriptionResponse {
     val key = requireKey()
     val (body, _) =
@@ -304,8 +470,8 @@ class ControlPlaneClient(
     body.error?.let { err ->
       throw PrismError.Server(err.message ?: err.code ?: "transcription error")
     }
-    if (body.text.isNullOrBlank()) throw PrismError.Server("Empty transcription")
-    return body
+    // text may be null/blank for silence; normalize to empty string for callers.
+    return if (body.text == null) body.copy(text = "") else body
   }
 
   fun transcribe(model: String, audio: String): TranscriptionResponse =
@@ -351,18 +517,27 @@ class ControlPlaneClient(
   /** Absolute stream URL (for diagnostics). */
   fun sttStreamUrl(): String = http.url("/v1/stt/stream")
 
-  /** `POST /v1/music/generations` -- metered music; [audio] URL or base64. */
+  /** `POST /v1/music/generations` -- metered music. Prefer [async] true (plane 0.4.29+). */
   fun generateMusic(request: MusicGenerationRequest): MusicGenerationResponse {
     val key = requireKey()
+    val async = request.async == true
+    val client = if (async) enqueueHttp else mediaHttp
+    val headers = if (async) mapOf("Prefer" to "respond-async") else emptyMap()
     val (body, _) =
-      mediaHttp.send<MusicGenerationRequest, MusicGenerationResponse>(
+      client.send<MusicGenerationRequest, MusicGenerationResponse>(
         "POST",
         "/v1/music/generations",
         body = request,
         bearer = key,
+        headers = headers,
+        okStatuses = (200..299).toSet(),
       )
     body.error?.let { err ->
       throw PrismError.Server(err.message ?: err.code ?: "music generation error")
+    }
+    if (body.isAsyncAccept) {
+      if (body.id.isNullOrBlank()) throw PrismError.Server("Async music job missing id")
+      return body
     }
     if (body.audio.isNullOrBlank()) throw PrismError.Server("Empty music audio payload")
     return body
@@ -372,8 +547,11 @@ class ControlPlaneClient(
     model: String,
     prompt: String,
     lyrics: String? = null,
+    async: Boolean = true,
   ): MusicGenerationResponse =
-    generateMusic(MusicGenerationRequest(model = model, prompt = prompt, lyrics = lyrics))
+    generateMusic(
+      MusicGenerationRequest(model = model, prompt = prompt, lyrics = lyrics, async = async),
+    )
 
   // --- Store (prepaid credit) ---
 
@@ -407,7 +585,9 @@ class ControlPlaneClient(
 
   companion object {
     const val PRODUCTION_BASE_URL: String = "https://play-proxy.skyphusion.org"
-    /** Client wait above plane non-chat ceiling (180s); matches iOS. */
-    const val NON_CHAT_TIMEOUT_SECONDS: Long = 200
+    /** Sync fallback / poll budget; matches iOS musicTimeout 420s. */
+    const val NON_CHAT_TIMEOUT_SECONDS: Long = 420
+    const val JOB_POLL_TIMEOUT_MS: Long = 420_000
+    const val SPEECH_JOB_POLL_TIMEOUT_MS: Long = 180_000
   }
 }

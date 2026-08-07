@@ -36,6 +36,7 @@ import org.skyphusion.prism.PrismClient
 import org.skyphusion.prism.PrismError
 import org.skyphusion.prism.SecretStore
 import org.skyphusion.prism.SecretStoreKeys
+import org.skyphusion.prism.VideoClipDuration
 import org.skyphusion.prism.prismUserFacingError
 
 /** Inference backend (iOS BackendKind). Product default is control plane. */
@@ -79,6 +80,14 @@ data class ChatTurn(
 
 enum class MediaKind { Image, Video }
 
+/** Primary plane-shell tabs (Image/Video ↔ Chat handoffs). */
+enum class MainTab {
+  Chat,
+  Image,
+  Video,
+  More,
+}
+
 /** One generated image/video kept in-session for history / re-use (cap 20). */
 data class MediaHistoryItem(
   val id: String = UUID.randomUUID().toString(),
@@ -89,6 +98,23 @@ data class MediaHistoryItem(
   val imageBase64: String? = null,
   val imageUrl: String? = null,
   val videoUrl: String? = null,
+) {
+  /** Prefer data: URL, else https, for chat attach / i2v handoff. */
+  val imageDataUrl: String?
+    get() {
+      val b64 = imageBase64?.takeIf { it.isNotEmpty() }
+      if (b64 != null) {
+        return if (b64.startsWith("data:")) b64 else "data:image/png;base64,$b64"
+      }
+      return imageUrl?.takeIf { it.isNotEmpty() }
+    }
+}
+
+/** Staged text file for the next chat turn (inlined into prompt; not RAG). */
+data class DraftDocument(
+  val id: String = UUID.randomUUID().toString(),
+  val name: String,
+  val text: String,
 )
 
 /**
@@ -165,6 +191,11 @@ class AppViewModel(
   /** Pending chat image attachments (data URLs) for the next send. Cap 3. */
   var draftImageDataUrls = mutableStateListOf<String>()
     private set
+  /** Pending text files for the next send (inlined; not Vectorize). Cap 3. */
+  var draftDocuments = mutableStateListOf<DraftDocument>()
+    private set
+  /** Plane shell tab selection (handoffs jump Chat / Image / Video). */
+  var selectedTab by mutableStateOf(MainTab.Chat)
   var serverSyncBusy by mutableStateOf(false)
     private set
   var serverSyncMessage by mutableStateOf<String?>(null)
@@ -266,6 +297,11 @@ class AppViewModel(
   var imageImageRef by mutableStateOf("")
   var videoPrompt by mutableStateOf("")
   var videoImageRef by mutableStateOf("")
+  /**
+   * User-chosen clip length in seconds. Clamped to the selected video model's CF range
+   * on model change and on generate (iOS `videoDurationSeconds` parity).
+   */
+  var videoDurationSeconds by mutableStateOf(5)
   var mediaBusy by mutableStateOf(false)
     private set
   var mediaStatus by mutableStateOf<String?>(null)
@@ -522,11 +558,14 @@ class AppViewModel(
     super.onCleared()
   }
 
-  /** Foreground resume: health + balance when unlocked (iOS onBecomeActive). */
+  /** Foreground resume: health + balance + pending Workflow jobs (iOS onBecomeActive). */
   fun onBecomeActive() {
     if (isBiometricallyLocked) return
     probePlaneHealth()
-    if (backend == BackendKind.ControlPlane && hasDeviceKey) refreshAccount()
+    if (backend == BackendKind.ControlPlane && hasDeviceKey) {
+      refreshAccount()
+      forceSyncPendingJobs()
+    }
   }
 
   /** Call when scene enters background so the next open requires biometrics. */
@@ -1064,6 +1103,7 @@ class AppViewModel(
           }?.id
           ?: videos.firstOrNull()?.id
     }
+    clampVideoDurationToSelectedModel()
     val speech =
       models.filter { it.modality == "tts" }.filter { !hideUnspendable || it.spendable != false }
     val stt =
@@ -1347,7 +1387,8 @@ class AppViewModel(
           }
         val t = res.text?.trim().orEmpty()
         if (t.isEmpty()) {
-          errorMessage = "Empty transcript."
+          // Plane returns 200 + "" for silence; not a transport failure.
+          errorMessage = "No speech detected. Try a longer clip or a different STT model."
           return@launch
         }
         lastTranscript = t
@@ -1617,11 +1658,14 @@ class AppViewModel(
       SendMode.NewFromDraft -> {
         val t = draft.trim()
         val imgs = draftImageDataUrls.toList()
-        if (t.isEmpty() && imgs.isEmpty()) return
-        text = if (t.isEmpty()) "(image)" else t
+        val docs = draftDocuments.toList()
+        if (t.isEmpty() && imgs.isEmpty() && docs.isEmpty()) return
+        val base = if (t.isEmpty() && imgs.isNotEmpty()) "(image)" else t
+        text = consumeDraftDocumentsIntoText(base, docs)
         sendImages = imgs
         draft = ""
         draftImageDataUrls.clear()
+        draftDocuments.clear()
         clearChatFailure()
         turns.add(
           ChatTurn(
@@ -1836,12 +1880,21 @@ class AppViewModel(
       mediaError = "This model needs a reference image (https or data: URL)."
       return
     }
+    // gpt-image-2 (and other plane auto-async models) return 202; Prefer helps long gens.
+    val preferAsync = modelId == "openai/gpt-image-2" || modelId.contains("gpt-image")
     mediaJob?.cancel()
     mediaJob =
       viewModelScope.launch {
         mediaBusy = true
         mediaError = null
-        mediaStatus = "Generating image…"
+        mediaStatus =
+          if (preferAsync) {
+            "Generating $modelId… · plane job (safe to lock)"
+          } else {
+            "Generating $modelId…"
+          }
+        lastImageUrl = null
+        lastImageBase64 = null
         startMediaTimer()
         try {
           val res =
@@ -1850,31 +1903,113 @@ class AppViewModel(
                 model = modelId,
                 prompt = prompt,
                 image = imageImageRef.trim().ifEmpty { null },
+                async = if (preferAsync) true else null,
               )
             }
-          lastImageUrl = res.firstDisplayUrl
-          lastImageBase64 = res.firstBase64
-          mediaStatus = "Image ready"
-          pushMediaHistory(
-            MediaHistoryItem(
-              kind = MediaKind.Image,
-              model = modelId,
-              prompt = prompt,
-              imageBase64 = res.firstBase64,
-              imageUrl = res.firstDisplayUrl,
-            ),
-          )
+          if (res.isAsyncAccept) {
+            val id = res.id!!
+            secrets.set(SecretStoreKeys.PENDING_IMAGE_JOB_ID, id)
+            secrets.set(SecretStoreKeys.PENDING_IMAGE_JOB_MODEL, modelId)
+            mediaStatus = "Plane job ${id.take(12)}… · runs on plane (lock OK)"
+            finishImageJob(id, modelId, prompt)
+            return@launch
+          }
+          applyImageResult(res.firstBase64, res.firstDisplayUrl, res.model ?: modelId, prompt)
           refreshAccount()
         } catch (e: Exception) {
-          if (e is kotlinx.coroutines.CancellationException) throw e
+          if (e is kotlinx.coroutines.CancellationException) {
+            if (!secrets.get(SecretStoreKeys.PENDING_IMAGE_JOB_ID).isNullOrBlank()) {
+              mediaStatus = "Plane job continues · re-checks when app is active"
+              mediaError = null
+            } else {
+              mediaError = "Cancelled"
+              mediaStatus = "Cancelled after ${mediaElapsedSeconds}s"
+            }
+            return@launch
+          }
           handleAuthError(e)
-          mediaError = e.toUserMessage()
-          mediaStatus = null
+          if (!secrets.get(SecretStoreKeys.PENDING_IMAGE_JOB_ID).isNullOrBlank()) {
+            mediaStatus = "Plane job continues · re-checks when app is active"
+            mediaError = null
+          } else {
+            clearPendingImageJob()
+            mediaError = e.toUserMessage()
+            mediaStatus = "Failed after ${mediaElapsedSeconds}s · prompt kept for Retry"
+          }
         } finally {
           stopMediaTimer()
           mediaBusy = false
         }
       }
+  }
+
+  private suspend fun finishImageJob(id: String, modelId: String, prompt: String) {
+    val job =
+      withContext(Dispatchers.IO) {
+        client.waitForJob(id, timeoutMs = ControlPlaneClient.JOB_POLL_TIMEOUT_MS)
+      }
+    if (!job.isTerminal) throw PrismError.Server("Job still running on the plane")
+    if (!job.isSuccess) {
+      clearPendingImageJob()
+      throw PrismError.Server(job.error?.message ?: job.error?.code ?: "Image job failed")
+    }
+    val b64 = job.result?.firstImageBase64
+    val url = job.result?.firstImageUrl
+    if (b64.isNullOrBlank() && url.isNullOrBlank()) {
+      clearPendingImageJob()
+      throw PrismError.Server("Image job finished with no image")
+    }
+    clearPendingImageJob()
+    applyImageResult(b64, url, job.result?.model ?: job.model ?: modelId, prompt)
+    refreshAccount()
+  }
+
+  private fun applyImageResult(
+    base64: String?,
+    url: String?,
+    modelId: String,
+    prompt: String,
+  ) {
+    lastImageBase64 = base64
+    lastImageUrl = url
+    mediaStatus = "Image ready · $modelId · ${mediaElapsedSeconds}s"
+    pushMediaHistory(
+      MediaHistoryItem(
+        kind = MediaKind.Image,
+        model = modelId,
+        prompt = prompt,
+        imageBase64 = base64,
+        imageUrl = url,
+      ),
+    )
+    NotificationHelper.notifyMedia(
+      appContext,
+      title = "Image ready",
+      body = "$modelId finished in ${mediaElapsedSeconds}s",
+      success = true,
+    )
+  }
+
+  private fun clearPendingImageJob() {
+    secrets.set(SecretStoreKeys.PENDING_IMAGE_JOB_ID, null)
+    secrets.set(SecretStoreKeys.PENDING_IMAGE_JOB_MODEL, null)
+  }
+
+  /** Snap [videoDurationSeconds] into the selected model's legal range. */
+  fun clampVideoDurationToSelectedModel() {
+    val mid = selectedVideoModelId ?: return
+    videoDurationSeconds = VideoClipDuration.limits(mid).clamp(videoDurationSeconds)
+  }
+
+  fun selectVideoModel(modelId: String) {
+    selectedVideoModelId = modelId
+    clampVideoDurationToSelectedModel()
+    persistUIPrefs()
+  }
+
+  fun updateVideoDurationSeconds(seconds: Int) {
+    val mid = selectedVideoModelId.orEmpty()
+    videoDurationSeconds = VideoClipDuration.limits(mid).clamp(seconds)
   }
 
   fun generateVideo() {
@@ -1895,13 +2030,16 @@ class AppViewModel(
       mediaError = "This model needs a first-frame image (i2v)."
       return
     }
+    val durationSec = VideoClipDuration.limits(modelId).clamp(videoDurationSeconds)
+    videoDurationSeconds = durationSec
     mediaJob?.cancel()
     mediaJob =
       viewModelScope.launch {
         mediaBusy = true
         mediaError = null
         mediaStatus =
-          "Generating $modelId · often 1-3 min. You can leave this tab; result stays here."
+          "Generating $modelId · ${durationSec}s clip · often 1-4 min. Stay in Prism if you can; " +
+            "job continues on the plane after accept (lock OK once job id shows)."
         NotificationHelper.ensureChannels(appContext)
         startMediaTimer()
         try {
@@ -1911,41 +2049,95 @@ class AppViewModel(
                 model = modelId,
                 prompt = prompt.ifEmpty { null },
                 image = image,
+                async = true,
+                durationSeconds = durationSec,
               )
             }
-          lastVideoUrl = res.video
-          mediaStatus = "Video ready · ${mediaElapsedSeconds}s"
-          pushMediaHistory(
-            MediaHistoryItem(
-              kind = MediaKind.Video,
-              model = modelId,
-              prompt = prompt.ifEmpty { "(image-only)" },
-              videoUrl = res.video,
-            ),
-          )
-          NotificationHelper.notifyMedia(
-            appContext,
-            title = "Video ready",
-            body = "$modelId finished in ${mediaElapsedSeconds}s",
-            success = true,
-          )
-          refreshAccount()
+          if (res.isAsyncAccept) {
+            val id = res.id!!
+            secrets.set(SecretStoreKeys.PENDING_VIDEO_JOB_ID, id)
+            secrets.set(SecretStoreKeys.PENDING_VIDEO_JOB_MODEL, modelId)
+            mediaStatus = "Plane job ${id.take(12)}… · runs on plane (lock OK)"
+            finishVideoJob(id, modelId, prompt)
+          } else {
+            clearPendingVideoJob()
+            applyVideoResult(res.video, modelId, prompt)
+          }
         } catch (e: Exception) {
-          if (e is kotlinx.coroutines.CancellationException) throw e
+          if (e is kotlinx.coroutines.CancellationException) {
+            if (!secrets.get(SecretStoreKeys.PENDING_VIDEO_JOB_ID).isNullOrBlank()) {
+              mediaStatus = "Plane job continues · re-checks when app is active"
+              mediaError = null
+            } else {
+              mediaError = "Cancelled"
+              mediaStatus = "Cancelled after ${mediaElapsedSeconds}s"
+            }
+            return@launch
+          }
           handleAuthError(e)
-          mediaError = e.toUserMessage()
-          mediaStatus = "Failed after ${mediaElapsedSeconds}s · prompt kept for Retry"
-          NotificationHelper.notifyMedia(
-            appContext,
-            title = "Video failed",
-            body = mediaError ?: "Video failed",
-            success = false,
-          )
+          if (!secrets.get(SecretStoreKeys.PENDING_VIDEO_JOB_ID).isNullOrBlank()) {
+            mediaStatus = "Plane job continues · re-checks when app is active"
+            mediaError = null
+          } else {
+            mediaError = e.toUserMessage()
+            mediaStatus = "Failed after ${mediaElapsedSeconds}s · prompt kept for Retry"
+            NotificationHelper.notifyMedia(
+              appContext,
+              title = "Video failed",
+              body = mediaError ?: "Video failed",
+              success = false,
+            )
+          }
         } finally {
           stopMediaTimer()
           mediaBusy = false
         }
       }
+  }
+
+  private suspend fun finishVideoJob(id: String, modelId: String, prompt: String) {
+    val job =
+      withContext(Dispatchers.IO) {
+        client.waitForJob(id, timeoutMs = ControlPlaneClient.JOB_POLL_TIMEOUT_MS)
+      }
+    if (!job.isTerminal) throw PrismError.Server("Job still running on the plane")
+    if (!job.isSuccess) {
+      clearPendingVideoJob()
+      throw PrismError.Server(job.error?.message ?: job.error?.code ?: "Video job failed")
+    }
+    val videoUrl = job.result?.video
+    if (videoUrl.isNullOrBlank()) {
+      clearPendingVideoJob()
+      throw PrismError.Server("Empty video in job result")
+    }
+    withContext(Dispatchers.IO) { client.waitForMediaReady(videoUrl) }
+    clearPendingVideoJob()
+    applyVideoResult(videoUrl, job.result?.model ?: modelId, prompt)
+  }
+
+  private fun applyVideoResult(videoUrl: String?, modelId: String, prompt: String) {
+    lastVideoUrl = videoUrl
+    mediaStatus = "Video ready · ${mediaElapsedSeconds}s"
+    pushMediaHistory(
+      MediaHistoryItem(
+        kind = MediaKind.Video,
+        model = modelId,
+        prompt = prompt.ifEmpty { "(image-only)" },
+        videoUrl = videoUrl,
+      ),
+    )
+    NotificationHelper.notifyMedia(
+      appContext,
+      title = "Video ready",
+      body = "$modelId finished in ${mediaElapsedSeconds}s",
+      success = true,
+    )
+    refreshAccount()
+  }
+
+  private fun clearPendingVideoJob() {
+    secrets.set(SecretStoreKeys.PENDING_VIDEO_JOB_ID, null)
+    secrets.set(SecretStoreKeys.PENDING_VIDEO_JOB_MODEL, null)
   }
 
   fun retryLastVideo() {
@@ -1956,17 +2148,194 @@ class AppViewModel(
   fun cancelMedia() {
     mediaJob?.cancel()
     mediaJob = null
+    // Explicit cancel drops tracking (job may still finish server-side).
+    clearPendingVideoJob()
+    clearPendingImageJob()
     stopMediaTimer()
     mediaBusy = false
     mediaStatus = "Cancelled"
   }
 
   fun useLastImageAsReference(forVideo: Boolean) {
-    val ref =
-      lastImageUrl
-        ?: lastImageBase64?.let { "data:image/png;base64,$it" }
-        ?: return
+    val ref = lastImageAsDataUrl() ?: return
     if (forVideo) videoImageRef = ref else imageImageRef = ref
+  }
+
+  private fun lastImageAsDataUrl(): String? {
+    val b64 = lastImageBase64?.takeIf { it.isNotEmpty() }
+    if (b64 != null) {
+      return if (b64.startsWith("data:")) b64 else "data:image/png;base64,$b64"
+    }
+    return lastImageUrl?.takeIf { it.isNotEmpty() }
+  }
+
+  // --- Cross-modal handoffs (Image ↔ Chat ↔ Video; iOS 1.0 parity) ---
+
+  /** Last generated image → chat draft; jump to Chat. */
+  fun useLastImageInChat() {
+    val url = lastImageAsDataUrl()
+    if (url == null) {
+      errorMessage = "No generated image to send to chat."
+      return
+    }
+    if (!attachChatImageDataUrl(url)) return
+    if (draft.trim().isEmpty()) draft = "Describe this image."
+    selectedTab = MainTab.Chat
+    banner = "Image attached to chat draft"
+  }
+
+  /** Media history image → chat draft. */
+  fun useMediaHistoryInChat(item: MediaHistoryItem) {
+    if (item.kind != MediaKind.Image) {
+      errorMessage = "That history item has no image."
+      return
+    }
+    val url = item.imageDataUrl
+    if (url == null) {
+      errorMessage = "That history item has no image."
+      return
+    }
+    if (!attachChatImageDataUrl(url)) return
+    if (draft.trim().isEmpty()) draft = "Describe this image."
+    selectedTab = MainTab.Chat
+    banner = "Image attached to chat draft"
+  }
+
+  /** Last generated image → Video i2v first frame; jump to Video. */
+  fun animateLastImage() {
+    if (lastImageAsDataUrl() == null) {
+      errorMessage = "No generated image to animate."
+      return
+    }
+    useLastImageAsReference(forVideo = true)
+    selectedTab = MainTab.Video
+    banner = "Image set as video first frame"
+  }
+
+  /** Media history image → Video i2v. */
+  fun animateMediaHistory(item: MediaHistoryItem) {
+    if (item.kind != MediaKind.Image) {
+      errorMessage = "That history item has no image."
+      return
+    }
+    val url = item.imageDataUrl
+    if (url == null) {
+      errorMessage = "That history item has no image."
+      return
+    }
+    videoImageRef = url
+    selectedTab = MainTab.Video
+    banner = "Image set as video first frame"
+  }
+
+  /** Chat draft attachment → Video i2v. */
+  fun animateChatDraftImage(at: Int) {
+    if (at !in draftImageDataUrls.indices) return
+    videoImageRef = draftImageDataUrls[at]
+    selectedTab = MainTab.Video
+    banner = "Chat image set as video first frame"
+  }
+
+  /** Chat turn image(s) → Video i2v (uses first URL). */
+  fun animateChatTurnImages(urls: List<String>) {
+    val first = urls.firstOrNull { it.isNotBlank() }
+    if (first == null) {
+      errorMessage = "No image on that message."
+      return
+    }
+    videoImageRef = first
+    selectedTab = MainTab.Video
+    banner = "Chat image set as video first frame"
+  }
+
+  /**
+   * Attach an existing data:/https image URL to the next chat send.
+   * Cap 3; de-dupes exact URLs.
+   */
+  fun attachChatImageDataUrl(dataUrl: String): Boolean {
+    val trimmed = dataUrl.trim()
+    if (trimmed.isEmpty()) return false
+    if (draftImageDataUrls.size >= 3) {
+      errorMessage = "At most 3 images per message."
+      return false
+    }
+    if (draftImageDataUrls.contains(trimmed)) return true
+    draftImageDataUrls.add(trimmed)
+    return true
+  }
+
+  /** Stage a UTF-8 text file for the next chat turn (inlined; not Vectorize/RAG). */
+  fun attachChatDocument(name: String, data: ByteArray): Boolean {
+    if (draftDocuments.size >= DRAFT_DOCUMENT_MAX_COUNT) {
+      errorMessage = "At most $DRAFT_DOCUMENT_MAX_COUNT text files per message."
+      return false
+    }
+    val raw =
+      try {
+        String(data, Charsets.UTF_8)
+      } catch (_: Exception) {
+        null
+      }
+        ?: try {
+          String(data, Charsets.ISO_8859_1)
+        } catch (_: Exception) {
+          null
+        }
+    if (raw == null) {
+      errorMessage = "Could not read $name as text. Use UTF-8 / plain text, not binary."
+      return false
+    }
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) {
+      errorMessage = "File is empty."
+      return false
+    }
+    val sample = trimmed.take(4000)
+    val control =
+      sample.count { ch ->
+        val v = ch.code
+        v < 32 && v != 9 && v != 10 && v != 13
+      }
+    if (control > sample.length / 10) {
+      errorMessage =
+        "$name looks binary. Attach images via the photo menu, or use a text file."
+      return false
+    }
+    var text = trimmed
+    if (text.length > DRAFT_DOCUMENT_MAX_CHARS) {
+      text =
+        text.take(DRAFT_DOCUMENT_MAX_CHARS) +
+          "\n\n…[truncated at $DRAFT_DOCUMENT_MAX_CHARS characters]"
+    }
+    val safeName = name.ifBlank { "document.txt" }
+    draftDocuments.add(DraftDocument(name = safeName, text = text))
+    return true
+  }
+
+  fun removeDraftDocument(id: String) {
+    draftDocuments.removeAll { it.id == id }
+  }
+
+  fun clearDraftDocuments() {
+    draftDocuments.clear()
+  }
+
+  /** Fold staged documents into the user message (fenced blocks). */
+  private fun consumeDraftDocumentsIntoText(
+    userText: String,
+    docs: List<DraftDocument>,
+  ): String {
+    if (docs.isEmpty()) return userText
+    val blocks =
+      docs.map { doc ->
+        "```${doc.name}\n${doc.text}\n```"
+      }
+    val body = userText.trim()
+    return if (body.isEmpty()) {
+      blocks.joinToString("\n\n")
+    } else {
+      body + "\n\n" + blocks.joinToString("\n\n")
+    }
   }
 
   fun restoreMediaHistoryItem(item: MediaHistoryItem) {
@@ -2248,6 +2617,13 @@ class AppViewModel(
   /** When true, auto-play TTS after the next successful [generateSpeech]. */
   private var autoPlaySpeechAfterGenerate: Boolean = false
   private var speechPlayer: android.media.MediaPlayer? = null
+  private var musicPlayer: android.media.MediaPlayer? = null
+  private var speechJob: Job? = null
+  private var musicJob: Job? = null
+  var isSpeechPlaying by mutableStateOf(false)
+    private set
+  var isMusicPlaying by mutableStateOf(false)
+    private set
 
   val canSpeakText: Boolean
     get() =
@@ -2267,33 +2643,100 @@ class AppViewModel(
       return
     }
     if (autoPlay) autoPlaySpeechAfterGenerate = true
-    viewModelScope.launch {
-      speechBusy = true
-      speechError = null
-      speechStatus = "Generating speech…"
-      try {
-        val res =
-          withContext(Dispatchers.IO) {
-            client.generateSpeech(model = modelId, input = input)
+    stopSpeechPlayback()
+    speechJob?.cancel()
+    speechJob =
+      viewModelScope.launch {
+        speechBusy = true
+        speechError = null
+        speechStatus = "Generating speech… (plane job after accept)"
+        try {
+          val res =
+            withContext(Dispatchers.IO) {
+              client.generateSpeech(model = modelId, input = input, async = true)
+            }
+          if (res.isAsyncAccept) {
+            val id = res.id!!
+            secrets.set(SecretStoreKeys.PENDING_SPEECH_JOB_ID, id)
+            secrets.set(SecretStoreKeys.PENDING_SPEECH_JOB_MODEL, modelId)
+            speechStatus = "Plane job ${id.take(12)}…"
+            finishSpeechJob(id, modelId)
+          } else {
+            clearPendingSpeechJob()
+            applySpeechResult(res.audioBase64, res.format ?: "mp3", modelId)
           }
-        lastSpeechBase64 = res.audioBase64
-        lastSpeechFormat = res.format ?: "mp3"
-        speechStatus = "Speech ready"
-        refreshAccount()
-        if (autoPlaySpeechAfterGenerate) {
+        } catch (e: Exception) {
+          if (e is kotlinx.coroutines.CancellationException) {
+            if (!secrets.get(SecretStoreKeys.PENDING_SPEECH_JOB_ID).isNullOrBlank()) {
+              speechStatus = "Plane job continues · re-checks when active"
+              speechError = null
+            }
+            return@launch
+          }
           autoPlaySpeechAfterGenerate = false
-          playLastSpeech()
+          handleAuthError(e)
+          if (!secrets.get(SecretStoreKeys.PENDING_SPEECH_JOB_ID).isNullOrBlank()) {
+            speechStatus = "Plane job continues · re-checks when active"
+            speechError = null
+          } else {
+            speechError = e.toUserMessage()
+            speechStatus = null
+          }
+        } finally {
+          speechBusy = false
         }
-      } catch (e: Exception) {
-        if (e is kotlinx.coroutines.CancellationException) throw e
-        autoPlaySpeechAfterGenerate = false
-        handleAuthError(e)
-        speechError = e.toUserMessage()
-        speechStatus = null
-      } finally {
-        speechBusy = false
       }
+  }
+
+  private suspend fun finishSpeechJob(id: String, modelId: String) {
+    val job =
+      withContext(Dispatchers.IO) {
+        client.waitForJob(
+          id,
+          pollIntervalMs = 3_000,
+          timeoutMs = ControlPlaneClient.SPEECH_JOB_POLL_TIMEOUT_MS,
+        )
+      }
+    if (!job.isTerminal) throw PrismError.Server("Job still running on the plane")
+    if (!job.isSuccess) {
+      clearPendingSpeechJob()
+      throw PrismError.Server(job.error?.message ?: job.error?.code ?: "Speech job failed")
     }
+    val b64 = job.result?.audioBase64 ?: job.result?.audio
+    val fmt = job.result?.format ?: "mp3"
+    // audio may be data URL or raw base64
+    val payload =
+      when {
+        b64.isNullOrBlank() -> null
+        b64.startsWith("http") -> null // stream URL only; store as status
+        else -> b64
+      }
+    if (payload == null && job.result?.audio?.startsWith("http") == true) {
+      clearPendingSpeechJob()
+      throw PrismError.Server("Speech job returned URL only; open not wired")
+    }
+    if (payload.isNullOrBlank()) {
+      clearPendingSpeechJob()
+      throw PrismError.Server("Empty speech in job result")
+    }
+    clearPendingSpeechJob()
+    applySpeechResult(payload, fmt, job.result?.model ?: modelId)
+  }
+
+  private fun applySpeechResult(audioBase64: String?, format: String, modelId: String) {
+    lastSpeechBase64 = audioBase64
+    lastSpeechFormat = format
+    speechStatus = "Speech ready · $modelId"
+    refreshAccount()
+    if (autoPlaySpeechAfterGenerate) {
+      autoPlaySpeechAfterGenerate = false
+      playLastSpeech()
+    }
+  }
+
+  private fun clearPendingSpeechJob() {
+    secrets.set(SecretStoreKeys.PENDING_SPEECH_JOB_ID, null)
+    secrets.set(SecretStoreKeys.PENDING_SPEECH_JOB_MODEL, null)
   }
 
   /** Use assistant text as TTS input and auto-play when ready (iOS parity). */
@@ -2306,14 +2749,39 @@ class AppViewModel(
 
   fun playLastSpeech() {
     val b64 = lastSpeechBase64 ?: return
+    if (isSpeechPlaying) {
+      stopSpeechPlayback()
+      return
+    }
     try {
+      stopMusicPlayback()
       speechPlayer?.release()
       speechPlayer =
-        MediaUtils.playAudioBase64(appContext, b64, lastSpeechFormat ?: "mp3")
-      speechStatus = "Playing…"
+        MediaUtils.playAudioBase64(appContext, b64, lastSpeechFormat ?: "mp3")?.also { p ->
+          p.setOnCompletionListener {
+            isSpeechPlaying = false
+            speechStatus = "Speech ready"
+          }
+        }
+      isSpeechPlaying = speechPlayer != null
+      speechStatus = if (isSpeechPlaying) "Playing…" else speechStatus
     } catch (e: Exception) {
       speechError = e.message ?: "Playback failed"
+      isSpeechPlaying = false
     }
+  }
+
+  fun stopSpeechPlayback() {
+    try {
+      speechPlayer?.stop()
+    } catch (_: Exception) {
+    }
+    try {
+      speechPlayer?.release()
+    } catch (_: Exception) {
+    }
+    speechPlayer = null
+    isSpeechPlaying = false
   }
 
   fun transcribeAudio() {
@@ -2338,8 +2806,14 @@ class AppViewModel(
           withContext(Dispatchers.IO) {
             client.transcribe(model = modelId, audio = audio)
           }
-        lastTranscript = res.text
-        speechStatus = "Transcript ready"
+        val t = res.text?.trim().orEmpty()
+        lastTranscript = t
+        speechStatus =
+          if (t.isEmpty()) {
+            "No speech detected (silence or format)."
+          } else {
+            "Transcript ready"
+          }
         refreshAccount()
       } catch (e: Exception) {
         if (e is kotlinx.coroutines.CancellationException) throw e
@@ -2460,32 +2934,419 @@ class AppViewModel(
       musicError = "Model is not spendable on this plan"
       return
     }
-    viewModelScope.launch {
-      musicBusy = true
-      musicError = null
-      musicStatus = "Generating music…"
-      try {
-        val res =
-          withContext(Dispatchers.IO) {
-            client.generateMusic(
-              model = modelId,
-              prompt = prompt,
-              lyrics = musicLyrics.trim().ifEmpty { null },
+    stopMusicPlayback()
+    musicJob?.cancel()
+    musicJob =
+      viewModelScope.launch {
+        musicBusy = true
+        musicError = null
+        musicStatus =
+          "Generating $modelId · often 2-4 min (up to ~5 with lyrics). " +
+            "Job continues on the plane after accept (lock OK)."
+        NotificationHelper.ensureChannels(appContext)
+        try {
+          val res =
+            withContext(Dispatchers.IO) {
+              client.generateMusic(
+                model = modelId,
+                prompt = prompt,
+                lyrics = musicLyrics.trim().ifEmpty { null },
+                async = true,
+              )
+            }
+          if (res.isAsyncAccept) {
+            val id = res.id!!
+            secrets.set(SecretStoreKeys.PENDING_MUSIC_JOB_ID, id)
+            secrets.set(SecretStoreKeys.PENDING_MUSIC_JOB_MODEL, modelId)
+            musicStatus = "Plane job ${id.take(12)}… · runs on plane (lock OK)"
+            finishMusicJob(id, modelId)
+          } else {
+            clearPendingMusicJob()
+            applyMusicResult(res, modelId)
+          }
+        } catch (e: Exception) {
+          if (e is kotlinx.coroutines.CancellationException) {
+            if (!secrets.get(SecretStoreKeys.PENDING_MUSIC_JOB_ID).isNullOrBlank()) {
+              musicStatus = "Plane job continues · re-checks when app is active"
+              musicError = null
+            } else {
+              musicError = "Cancelled"
+              musicStatus = null
+            }
+            return@launch
+          }
+          handleAuthError(e)
+          if (!secrets.get(SecretStoreKeys.PENDING_MUSIC_JOB_ID).isNullOrBlank()) {
+            musicStatus = "Plane job continues · re-checks when app is active"
+            musicError = null
+          } else {
+            musicError = e.toUserMessage()
+            musicStatus = null
+            NotificationHelper.notifyMedia(
+              appContext,
+              title = "Music failed",
+              body = musicError ?: "Music failed",
+              success = false,
             )
           }
-        lastMusicUrl = res.audioUrl
-        lastMusicBase64 =
-          res.audio?.takeIf { !it.startsWith("http://") && !it.startsWith("https://") }
-        musicStatus = "Music ready"
-        refreshAccount()
-      } catch (e: Exception) {
-        if (e is kotlinx.coroutines.CancellationException) throw e
-        handleAuthError(e)
-        musicError = e.toUserMessage()
-        musicStatus = null
-      } finally {
-        musicBusy = false
+        } finally {
+          musicBusy = false
+        }
       }
+  }
+
+  fun cancelMusic() {
+    musicJob?.cancel()
+    musicJob = null
+    clearPendingMusicJob()
+    musicBusy = false
+    musicStatus = "Cancelled"
+    musicError = "Cancelled"
+  }
+
+  private suspend fun finishMusicJob(id: String, modelId: String) {
+    val job =
+      withContext(Dispatchers.IO) {
+        client.waitForJob(id, timeoutMs = ControlPlaneClient.JOB_POLL_TIMEOUT_MS)
+      }
+    if (!job.isTerminal) throw PrismError.Server("Job still running on the plane")
+    if (!job.isSuccess) {
+      clearPendingMusicJob()
+      throw PrismError.Server(job.error?.message ?: job.error?.code ?: "Music job failed")
+    }
+    clearPendingMusicJob()
+    val audio = job.result?.audio
+    lastMusicUrl = audio?.takeIf { it.startsWith("http") }
+    lastMusicBase64 =
+      audio?.takeIf { !it.startsWith("http://") && !it.startsWith("https://") }
+        ?: job.result?.audioBase64
+    musicStatus = "Music ready · ${job.result?.model ?: modelId}"
+    NotificationHelper.notifyMedia(
+      appContext,
+      title = "Music ready",
+      body = musicStatus ?: "Music ready",
+      success = true,
+    )
+    refreshAccount()
+  }
+
+  private fun applyMusicResult(res: org.skyphusion.prism.MusicGenerationResponse, modelId: String) {
+    lastMusicUrl = res.audioUrl
+    lastMusicBase64 =
+      res.audio?.takeIf { !it.startsWith("http://") && !it.startsWith("https://") }
+    musicStatus = "Music ready · ${res.model ?: modelId}"
+    NotificationHelper.notifyMedia(
+      appContext,
+      title = "Music ready",
+      body = musicStatus ?: "Music ready",
+      success = true,
+    )
+    refreshAccount()
+  }
+
+  private fun clearPendingMusicJob() {
+    secrets.set(SecretStoreKeys.PENDING_MUSIC_JOB_ID, null)
+    secrets.set(SecretStoreKeys.PENDING_MUSIC_JOB_MODEL, null)
+  }
+
+  fun playLastMusic() {
+    if (isMusicPlaying) {
+      stopMusicPlayback()
+      return
+    }
+    val b64 = lastMusicBase64
+    if (b64 != null) {
+      try {
+        stopSpeechPlayback()
+        musicPlayer?.release()
+        musicPlayer =
+          MediaUtils.playAudioBase64(appContext, b64, "mp3")?.also { p ->
+            p.setOnCompletionListener {
+              isMusicPlaying = false
+              musicStatus = musicStatus?.removePrefix("Playing… · ") ?: "Music ready"
+            }
+          }
+        isMusicPlaying = musicPlayer != null
+        if (isMusicPlaying) musicStatus = "Playing…"
+      } catch (e: Exception) {
+        musicError = e.message ?: "Playback failed"
+        isMusicPlaying = false
+      }
+      return
+    }
+    musicError = "No inline audio to play (open URL if available)."
+  }
+
+  fun stopMusicPlayback() {
+    try {
+      musicPlayer?.stop()
+    } catch (_: Exception) {
+    }
+    try {
+      musicPlayer?.release()
+    } catch (_: Exception) {
+    }
+    musicPlayer = null
+    isMusicPlaying = false
+  }
+
+  /**
+   * Always re-query plane for any pending Workflow job.
+   * Does not gate on busy flags (iOS forceSyncPendingJobs).
+   */
+  fun forceSyncPendingJobs() {
+    if (!hasDeviceKey) return
+    viewModelScope.launch {
+      secrets.get(SecretStoreKeys.PENDING_MUSIC_JOB_ID)?.takeIf { it.isNotBlank() }?.let { id ->
+        syncOnePendingMusicJob(id)
+      }
+      secrets.get(SecretStoreKeys.PENDING_VIDEO_JOB_ID)?.takeIf { it.isNotBlank() }?.let { id ->
+        syncOnePendingVideoJob(id)
+      }
+      secrets.get(SecretStoreKeys.PENDING_SPEECH_JOB_ID)?.takeIf { it.isNotBlank() }?.let { id ->
+        syncOnePendingSpeechJob(id)
+      }
+      secrets.get(SecretStoreKeys.PENDING_IMAGE_JOB_ID)?.takeIf { it.isNotBlank() }?.let { id ->
+        syncOnePendingImageJob(id)
+      }
+    }
+  }
+
+  private suspend fun syncOnePendingImageJob(id: String) {
+    val model = secrets.get(SecretStoreKeys.PENDING_IMAGE_JOB_MODEL) ?: "image"
+    val prompt = imagePrompt.trim()
+    try {
+      val job = withContext(Dispatchers.IO) { client.getJob(id) }
+      if (job.isTerminal) {
+        mediaJob?.cancel()
+        mediaBusy = true
+        startMediaTimer()
+        try {
+          if (job.isSuccess) {
+            val b64 = job.result?.firstImageBase64
+            val url = job.result?.firstImageUrl
+            if (!b64.isNullOrBlank() || !url.isNullOrBlank()) {
+              clearPendingImageJob()
+              applyImageResult(b64, url, job.result?.model ?: job.model ?: model, prompt)
+              mediaError = null
+              refreshAccount()
+            } else {
+              clearPendingImageJob()
+              mediaError = "Empty image in job result"
+              mediaStatus = "Failed"
+            }
+          } else {
+            clearPendingImageJob()
+            mediaError = job.error?.message ?: job.error?.code ?: "Image job failed"
+            mediaStatus = "Failed"
+            NotificationHelper.notifyMedia(appContext, "Image failed", mediaError!!, false)
+          }
+        } finally {
+          stopMediaTimer()
+          mediaBusy = false
+        }
+        return
+      }
+      mediaJob?.cancel()
+      mediaBusy = true
+      mediaError = null
+      mediaStatus = "Plane job ${id.take(12)}… · still running"
+      startMediaTimer()
+      mediaJob =
+        viewModelScope.launch {
+          try {
+            finishImageJob(id, model, prompt)
+          } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) {
+              mediaStatus = "Plane job continues · re-checks when active"
+            } else if (!secrets.get(SecretStoreKeys.PENDING_IMAGE_JOB_ID).isNullOrBlank()) {
+              mediaStatus = "Plane job continues · re-checks when active"
+            } else {
+              mediaError = e.toUserMessage()
+              mediaStatus = "Failed"
+            }
+          } finally {
+            stopMediaTimer()
+            mediaBusy = false
+          }
+        }
+    } catch (_: Exception) {
+      mediaStatus = "Plane job ${id.take(12)}… · re-check pending"
+    }
+  }
+
+  private suspend fun syncOnePendingMusicJob(id: String) {
+    val model =
+      secrets.get(SecretStoreKeys.PENDING_MUSIC_JOB_MODEL) ?: "music"
+    try {
+      val job = withContext(Dispatchers.IO) { client.getJob(id) }
+      if (job.isTerminal) {
+        musicJob?.cancel()
+        musicBusy = true
+        try {
+          if (job.isSuccess) {
+            clearPendingMusicJob()
+            val audio = job.result?.audio
+            lastMusicUrl = audio?.takeIf { it.startsWith("http") }
+            lastMusicBase64 =
+              audio?.takeIf { !it.startsWith("http") } ?: job.result?.audioBase64
+            musicStatus = "Music ready · ${job.result?.model ?: model}"
+            musicError = null
+            NotificationHelper.notifyMedia(appContext, "Music ready", musicStatus!!, true)
+            refreshAccount()
+          } else {
+            clearPendingMusicJob()
+            musicError = job.error?.message ?: job.error?.code ?: "Music job failed"
+            musicStatus = "Failed"
+            NotificationHelper.notifyMedia(appContext, "Music failed", musicError!!, false)
+          }
+        } finally {
+          musicBusy = false
+        }
+        return
+      }
+      // Still running: restart poll
+      musicJob?.cancel()
+      musicBusy = true
+      musicError = null
+      musicStatus = "Plane job ${id.take(12)}… · still running"
+      musicJob =
+        viewModelScope.launch {
+          try {
+            finishMusicJob(id, model)
+          } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) {
+              musicStatus = "Plane job continues · re-checks when active"
+            } else if (!secrets.get(SecretStoreKeys.PENDING_MUSIC_JOB_ID).isNullOrBlank()) {
+              musicStatus = "Plane job continues · re-checks when active"
+            } else {
+              musicError = e.toUserMessage()
+              musicStatus = "Failed"
+            }
+          } finally {
+            musicBusy = false
+          }
+        }
+    } catch (_: Exception) {
+      musicStatus = "Plane job ${id.take(12)}… · re-check pending"
+    }
+  }
+
+  private suspend fun syncOnePendingVideoJob(id: String) {
+    val model = secrets.get(SecretStoreKeys.PENDING_VIDEO_JOB_MODEL) ?: "video"
+    val prompt = videoPrompt.trim()
+    try {
+      val job = withContext(Dispatchers.IO) { client.getJob(id) }
+      if (job.isTerminal) {
+        mediaJob?.cancel()
+        mediaBusy = true
+        startMediaTimer()
+        try {
+          if (job.isSuccess) {
+            val videoUrl = job.result?.video
+            if (!videoUrl.isNullOrBlank()) {
+              withContext(Dispatchers.IO) { client.waitForMediaReady(videoUrl) }
+              clearPendingVideoJob()
+              applyVideoResult(videoUrl, job.result?.model ?: model, prompt)
+              mediaError = null
+            } else {
+              clearPendingVideoJob()
+              mediaError = "Empty video in job result"
+              mediaStatus = "Failed"
+            }
+          } else {
+            clearPendingVideoJob()
+            mediaError = job.error?.message ?: job.error?.code ?: "Video job failed"
+            mediaStatus = "Failed"
+            NotificationHelper.notifyMedia(appContext, "Video failed", mediaError!!, false)
+          }
+        } finally {
+          stopMediaTimer()
+          mediaBusy = false
+        }
+        return
+      }
+      mediaJob?.cancel()
+      mediaBusy = true
+      mediaError = null
+      mediaStatus = "Plane job ${id.take(12)}… · still running"
+      startMediaTimer()
+      mediaJob =
+        viewModelScope.launch {
+          try {
+            finishVideoJob(id, model, prompt)
+          } catch (e: Exception) {
+            if (e !is kotlinx.coroutines.CancellationException &&
+              secrets.get(SecretStoreKeys.PENDING_VIDEO_JOB_ID).isNullOrBlank()
+            ) {
+              mediaError = e.toUserMessage()
+              mediaStatus = "Failed"
+            } else {
+              mediaStatus = "Plane job continues · re-checks when active"
+              mediaError = null
+            }
+          } finally {
+            stopMediaTimer()
+            mediaBusy = false
+          }
+        }
+    } catch (_: Exception) {
+      mediaStatus = "Plane job ${id.take(12)}… · re-check pending"
+    }
+  }
+
+  private suspend fun syncOnePendingSpeechJob(id: String) {
+    val model = secrets.get(SecretStoreKeys.PENDING_SPEECH_JOB_MODEL) ?: "speech"
+    try {
+      val job = withContext(Dispatchers.IO) { client.getJob(id) }
+      if (job.isTerminal) {
+        speechJob?.cancel()
+        speechBusy = true
+        try {
+          if (job.isSuccess) {
+            clearPendingSpeechJob()
+            val b64 = job.result?.audioBase64 ?: job.result?.audio
+            if (!b64.isNullOrBlank() && !b64.startsWith("http")) {
+              applySpeechResult(b64, job.result?.format ?: "mp3", job.result?.model ?: model)
+              speechError = null
+            } else {
+              speechError = "Empty speech in job result"
+              speechStatus = "Failed"
+            }
+          } else {
+            clearPendingSpeechJob()
+            speechError = job.error?.message ?: job.error?.code ?: "Speech job failed"
+            speechStatus = "Failed"
+          }
+        } finally {
+          speechBusy = false
+        }
+        return
+      }
+      speechJob?.cancel()
+      speechBusy = true
+      speechError = null
+      speechStatus = "Plane job ${id.take(12)}… · still running"
+      speechJob =
+        viewModelScope.launch {
+          try {
+            finishSpeechJob(id, model)
+          } catch (e: Exception) {
+            if (e !is kotlinx.coroutines.CancellationException &&
+              secrets.get(SecretStoreKeys.PENDING_SPEECH_JOB_ID).isNullOrBlank()
+            ) {
+              speechError = e.toUserMessage()
+              speechStatus = "Failed"
+            } else {
+              speechStatus = "Plane job continues · re-checks when active"
+              speechError = null
+            }
+          } finally {
+            speechBusy = false
+          }
+        }
+    } catch (_: Exception) {
+      speechStatus = "Plane job ${id.take(12)}… · re-check pending"
     }
   }
 
@@ -2499,6 +3360,8 @@ class AppViewModel(
 
   companion object {
     private const val MEDIA_HISTORY_CAP = 20
+    const val DRAFT_DOCUMENT_MAX_CHARS = 80_000
+    const val DRAFT_DOCUMENT_MAX_COUNT = 3
 
     /** Empty-state chips; full self-contained prompts (never trailing blanks). */
     val starterPrompts: List<String> =

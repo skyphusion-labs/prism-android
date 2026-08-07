@@ -35,6 +35,7 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Image
@@ -247,7 +248,29 @@ fun ChatScreen(
     !vm.isBusy &&
       !vm.chatSttBusy &&
       vm.selectedModelId != null &&
-      (vm.draft.isNotBlank() || vm.draftImageDataUrls.isNotEmpty())
+      (vm.draft.isNotBlank() ||
+        vm.draftImageDataUrls.isNotEmpty() ||
+        vm.draftDocuments.isNotEmpty())
+
+  val pickTextDoc =
+    rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+      if (uri == null) return@rememberLauncherForActivityResult
+      try {
+        val name =
+          uri.lastPathSegment?.substringAfterLast('/')?.ifBlank { null } ?: "document.txt"
+        val bytes =
+          context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            ?: return@rememberLauncherForActivityResult
+        if (vm.attachChatDocument(name, bytes)) {
+          Haptics.light(view)
+        } else {
+          Haptics.error(view)
+        }
+      } catch (e: Exception) {
+        vm.errorMessage = e.message ?: "Could not read file"
+        Haptics.error(view)
+      }
+    }
 
   Scaffold(
     topBar = {
@@ -441,6 +464,15 @@ fun ChatScreen(
                 Haptics.light(view)
                 vm.speakText(turn.text)
               },
+              onAnimate =
+                turn.imageDataUrls
+                  ?.takeIf { it.isNotEmpty() }
+                  ?.let {
+                    {
+                      Haptics.success(view)
+                      vm.animateChatTurnImages(it)
+                    }
+                  },
             )
           }
         }
@@ -542,7 +574,7 @@ fun ChatScreen(
           modifier = Modifier.padding(horizontal = 12.dp),
         )
       }
-      if (vm.draftImageDataUrls.isNotEmpty()) {
+      if (vm.draftImageDataUrls.isNotEmpty() || vm.draftDocuments.isNotEmpty()) {
         Row(
           modifier =
             Modifier
@@ -553,12 +585,34 @@ fun ChatScreen(
           verticalAlignment = Alignment.CenterVertically,
         ) {
           vm.draftImageDataUrls.forEachIndexed { idx, _ ->
-            TextButton(onClick = { vm.removeDraftImage(idx) }) {
-              Text("Image ${idx + 1} ×")
+            Column {
+              TextButton(onClick = { vm.removeDraftImage(idx) }) {
+                Text("Image ${idx + 1} ×")
+              }
+              TextButton(
+                onClick = {
+                  Haptics.success(view)
+                  vm.animateChatDraftImage(idx)
+                },
+              ) {
+                Text("Animate")
+              }
             }
           }
-          TextButton(onClick = { vm.clearDraftImages() }) {
-            Text("Clear photos")
+          vm.draftDocuments.forEach { doc ->
+            TextButton(onClick = { vm.removeDraftDocument(doc.id) }) {
+              Text("${doc.name} ×")
+            }
+          }
+          if (vm.draftImageDataUrls.isNotEmpty()) {
+            TextButton(onClick = { vm.clearDraftImages() }) {
+              Text("Clear photos")
+            }
+          }
+          if (vm.draftDocuments.isNotEmpty()) {
+            TextButton(onClick = { vm.clearDraftDocuments() }) {
+              Text("Clear files")
+            }
           }
         }
       }
@@ -618,6 +672,15 @@ fun ChatScreen(
                 pasteClipboardImage()
               },
               leadingIcon = { Icon(Icons.Default.ContentPaste, contentDescription = null) },
+            )
+            DropdownMenuItem(
+              text = { Text("Text file (inline)") },
+              onClick = {
+                attachMenu = false
+                pickTextDoc.launch(arrayOf("text/*", "application/json", "application/xml"))
+              },
+              enabled = vm.draftDocuments.size < AppViewModel.DRAFT_DOCUMENT_MAX_COUNT,
+              leadingIcon = { Icon(Icons.Default.AttachFile, contentDescription = null) },
             )
           }
         }
@@ -916,6 +979,7 @@ private fun TurnBubble(
   onRegenerate: (() -> Unit)? = null,
   onUseAsDraft: (() -> Unit)? = null,
   onSpeak: (() -> Unit)? = null,
+  onAnimate: (() -> Unit)? = null,
 ) {
   val isUser = turn.role == ChatTurn.Role.User
   Row(
@@ -995,16 +1059,21 @@ private fun TurnBubble(
           }
         }
       }
-      if (!isUser && !isStreaming) {
+      if (!isStreaming) {
         Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
-          if (canRegenerate && onRegenerate != null) {
+          if (!isUser && canRegenerate && onRegenerate != null) {
             TextButton(onClick = onRegenerate) {
               Text("Regenerate")
             }
           }
-          if (canSpeak && onSpeak != null) {
+          if (!isUser && canSpeak && onSpeak != null) {
             TextButton(onClick = onSpeak) {
               Text("Speak")
+            }
+          }
+          if (isUser && onAnimate != null) {
+            TextButton(onClick = onAnimate) {
+              Text("Animate")
             }
           }
         }

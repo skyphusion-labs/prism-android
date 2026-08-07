@@ -115,12 +115,25 @@ class HttpJson(
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
 
-    /** Above plane non-chat ceiling (180s); iOS uses 200s. */
+    /**
+     * Long media (sync fallback) and poll headroom.
+     * Plane nonchat ~300s; MiniMax music often ~4 min; iOS musicTimeout 420s.
+     */
     fun nonChatClient(): OkHttpClient =
       defaultClient()
         .newBuilder()
-        .readTimeout(200, TimeUnit.SECONDS)
+        .readTimeout(420, TimeUnit.SECONDS)
         .writeTimeout(120, TimeUnit.SECONDS)
+        .callTimeout(450, TimeUnit.SECONDS)
+        .build()
+
+    /** Short enqueue for async accept (202 + job id). */
+    fun asyncEnqueueClient(): OkHttpClient =
+      defaultClient()
+        .newBuilder()
+        .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .callTimeout(90, TimeUnit.SECONDS)
         .build()
 
     fun mapHttpError(code: Int, raw: String): PrismError {

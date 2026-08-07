@@ -686,6 +686,11 @@ data class ImageGenerationRequest(
   val prompt: String,
   /** Optional https or data: URL for i2i / edit models. */
   val image: String? = null,
+  /**
+   * When true (plane 0.4.35+), returns 202 job id; poll [AsyncJobResponse].
+   * gpt-image-2 is always async on the plane even without this flag.
+   */
+  val async: Boolean? = null,
 )
 
 @Serializable
@@ -694,6 +699,10 @@ data class ImageGenerationResponse(
   val model: String? = null,
   val data: List<ImageGenerationData>? = null,
   val error: ControlPlaneErrorBody? = null,
+  /** Present on 202 async accept (plane 0.4.35+). */
+  val id: String? = null,
+  val status: String? = null,
+  val kind: String? = null,
 ) {
   @Serializable
   data class ImageGenerationData(
@@ -721,6 +730,10 @@ data class ImageGenerationResponse(
       if (raw != null && (raw.startsWith("http://") || raw.startsWith("https://"))) return raw
       return null
     }
+
+  /** True when this is a 202 job accept (no image payload yet). */
+  val isAsyncAccept: Boolean
+    get() = !id.isNullOrBlank() && firstBase64 == null && firstDisplayUrl == null
 }
 
 @Serializable
@@ -729,6 +742,14 @@ data class VideoGenerationRequest(
   val prompt: String? = null,
   /** Optional i2v source (data: or https:). */
   val image: String? = null,
+  /** plane 0.4.29+: 202 + job id instead of holding the connection. */
+  val async: Boolean? = null,
+  /**
+   * Clip length for CF. **Type is model-specific:** integer seconds for most models,
+   * string like `"8s"` for Google Veo. Use [VideoClipDuration.wire] for a user choice,
+   * or [VideoClipDuration.forModel] for the model default when omitting.
+   */
+  val duration: JsonElement? = null,
 )
 
 @Serializable
@@ -736,7 +757,63 @@ data class VideoGenerationResponse(
   val model: String? = null,
   val video: String? = null,
   val error: ControlPlaneErrorBody? = null,
-)
+  /** Present on 202 async accept (plane 0.4.29+). */
+  val id: String? = null,
+  val status: String? = null,
+  val kind: String? = null,
+) {
+  val isAsyncAccept: Boolean
+    get() = !id.isNullOrBlank() && video.isNullOrBlank()
+}
+
+// --- Async jobs (`GET /v1/jobs/:id`, plane 0.4.29+) ---
+
+@Serializable
+data class AsyncJobResponse(
+  val id: String,
+  val kind: String? = null,
+  val model: String? = null,
+  val status: String,
+  @SerialName("created_at") val createdAt: String? = null,
+  @SerialName("updated_at") val updatedAt: String? = null,
+  val result: AsyncJobResult? = null,
+  val error: ControlPlaneErrorBody? = null,
+) {
+  val isTerminal: Boolean get() = status == "succeeded" || status == "failed"
+  val isSuccess: Boolean get() = status == "succeeded"
+}
+
+@Serializable
+data class AsyncJobResult(
+  val video: String? = null,
+  val audio: String? = null,
+  val model: String? = null,
+  val rehosted: Boolean? = null,
+  val format: String? = null,
+  @SerialName("audio_base64") val audioBase64: String? = null,
+  /** Async image jobs (plane 0.4.35+): OpenAI-ish `data[].url` / `data[].b64_json`. */
+  val data: List<ImageGenerationResponse.ImageGenerationData>? = null,
+  val created: Long? = null,
+) {
+  val firstImageUrl: String?
+    get() {
+      data?.firstOrNull()?.url?.takeIf { it.isNotEmpty() }?.let { return it }
+      val raw = data?.firstOrNull()?.b64Json
+      if (raw != null && (raw.startsWith("http://") || raw.startsWith("https://"))) return raw
+      return null
+    }
+
+  val firstImageBase64: String?
+    get() {
+      val raw = data?.firstOrNull()?.b64Json?.takeIf { it.isNotEmpty() } ?: return null
+      if (raw.startsWith("http://") || raw.startsWith("https://")) return null
+      if (raw.startsWith("data:image/")) {
+        val idx = raw.indexOf("base64,")
+        if (idx >= 0) return raw.substring(idx + "base64,".length)
+      }
+      return raw
+    }
+}
 
 // --- Speech TTS (`POST /v1/audio/speech`) ---
 
@@ -744,16 +821,24 @@ data class VideoGenerationResponse(
 data class SpeechGenerationRequest(
   val model: String,
   val input: String,
+  /** plane 0.4.32+: Workflow + poll. */
+  val async: Boolean? = null,
 )
 
-/** Plane TTS envelope: base64 audio (typically mp3). */
+/** Plane TTS envelope: base64 audio (typically mp3) or async job accept. */
 @Serializable
 data class SpeechGenerationResponse(
   val model: String? = null,
   @SerialName("audio_base64") val audioBase64: String? = null,
   val format: String? = null,
   val error: ControlPlaneErrorBody? = null,
+  val id: String? = null,
+  val status: String? = null,
+  val kind: String? = null,
 ) {
+  val isAsyncAccept: Boolean
+    get() = !id.isNullOrBlank() && audioBase64.isNullOrBlank()
+
   /** Decoded audio bytes when [audioBase64] is present (strips optional data: prefix). */
   fun audioBytes(): ByteArray? {
     val raw = audioBase64?.takeIf { it.isNotEmpty() } ?: return null
@@ -802,6 +887,8 @@ data class MusicGenerationRequest(
   val model: String,
   val prompt: String,
   val lyrics: String? = null,
+  /** plane 0.4.29+: lock-safe poll. */
+  val async: Boolean? = null,
 )
 
 /** Plane music envelope: `audio` is a URL or inline base64/data asset. */
@@ -810,7 +897,13 @@ data class MusicGenerationResponse(
   val model: String? = null,
   val audio: String? = null,
   val error: ControlPlaneErrorBody? = null,
+  val id: String? = null,
+  val status: String? = null,
+  val kind: String? = null,
 ) {
+  val isAsyncAccept: Boolean
+    get() = !id.isNullOrBlank() && audio.isNullOrBlank()
+
   fun audioBytes(): ByteArray? {
     val raw = audio?.takeIf { it.isNotEmpty() } ?: return null
     if (raw.startsWith("http://") || raw.startsWith("https://")) return null

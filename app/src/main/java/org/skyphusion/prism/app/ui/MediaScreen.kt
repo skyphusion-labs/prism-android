@@ -74,10 +74,15 @@ fun MediaScreen(
     if (kind == MediaKind.Image) vm.selectedImageModelId else vm.selectedVideoModelId
   val selected = models.firstOrNull { it.id == selectedId }
   var expanded by remember { mutableStateOf(false) }
+  var durationExpanded by remember { mutableStateOf(false) }
   val spendPreview = if (kind == MediaKind.Image) vm.imageSpendPreview else vm.videoSpendPreview
   val history = vm.historyFor(kind)
   val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
   var saveMessage by remember { mutableStateOf<String?>(null) }
+  val videoDurationLimits =
+    remember(selectedId) {
+      org.skyphusion.prism.VideoClipDuration.limits(selectedId.orEmpty())
+    }
 
   val pickPhoto =
     rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
@@ -175,10 +180,10 @@ fun MediaScreen(
               onClick = {
                 if (kind == MediaKind.Image) {
                   vm.selectedImageModelId = m.id
+                  vm.persistUIPrefs()
                 } else {
-                  vm.selectedVideoModelId = m.id
+                  vm.selectVideoModel(m.id)
                 }
-                vm.persistUIPrefs()
                 expanded = false
               },
             )
@@ -255,6 +260,41 @@ fun MediaScreen(
             Text("Clear reference")
           }
         }
+
+        // Clip length: user picks up to the model's CF max (iOS videoDurationPicker parity).
+        ExposedDropdownMenuBox(
+          expanded = durationExpanded,
+          onExpandedChange = { durationExpanded = it },
+        ) {
+          OutlinedTextField(
+            value = "${vm.videoDurationSeconds}s",
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Clip length") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(durationExpanded) },
+            modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+          )
+          ExposedDropdownMenu(
+            expanded = durationExpanded,
+            onDismissRequest = { durationExpanded = false },
+          ) {
+            videoDurationLimits.pickerSeconds.forEach { sec ->
+              DropdownMenuItem(
+                text = { Text("${sec}s") },
+                onClick = {
+                  vm.updateVideoDurationSeconds(sec)
+                  durationExpanded = false
+                },
+              )
+            }
+          }
+        }
+        Text(
+          org.skyphusion.prism.VideoClipDuration.rangeHint(selectedId.orEmpty()) +
+            ". Longer clips take longer to generate.",
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
       }
 
       spendPreview?.let {
@@ -269,8 +309,11 @@ fun MediaScreen(
         if (kind == MediaKind.Image) {
           "Unit-priced image door. Prefer xAI / Flux when available. i2i models need a reference."
         } else {
-          "Unit-priced video door. Prefer Seedance Fast / Veo. Hailuo is image-to-video only. " +
-            "Grok video needs plane 0.4.14+ (ZDR)."
+          val mid = vm.selectedVideoModelId.orEmpty()
+          val clip = org.skyphusion.prism.VideoClipDuration.labelFor(mid, vm.videoDurationSeconds)
+          "Unit-priced video · clip $clip · ${org.skyphusion.prism.VideoClipDuration.rangeHint(mid)}. " +
+            "Prefer Seedance Fast / Veo. Hailuo is i2v-only. " +
+            "Long runs use plane async jobs (lock-safe after job id)."
         },
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -284,7 +327,7 @@ fun MediaScreen(
         ) {
           CircularProgressIndicator(modifier = Modifier.height(22.dp), strokeWidth = 2.dp)
           Text(
-            "Generating… ${vm.mediaElapsedSeconds}s",
+            (vm.mediaStatus ?: "Generating…") + " · ${vm.mediaElapsedSeconds}s",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
           )
@@ -384,6 +427,22 @@ fun MediaScreen(
               },
             ) {
               Text("Save to Photos")
+            }
+            TextButton(
+              onClick = {
+                Haptics.success(view)
+                vm.useLastImageInChat()
+              },
+            ) {
+              Text("Use in chat")
+            }
+            TextButton(
+              onClick = {
+                Haptics.success(view)
+                vm.animateLastImage()
+              },
+            ) {
+              Text("Animate")
             }
           }
           vm.lastImageUrl?.let { url ->
@@ -486,28 +545,50 @@ fun MediaScreen(
           }
         }
         Text(
-          "Newest first. Tap to restore. Not saved across launches.",
+          "Newest first. Tap to restore. Use in chat / Animate hand off to Chat or Video. Session-only.",
           style = MaterialTheme.typography.labelSmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         history.forEach { item ->
-          TextButton(
-            onClick = { vm.restoreMediaHistoryItem(item) },
-            modifier = Modifier.fillMaxWidth(),
-          ) {
-            Column(Modifier.fillMaxWidth()) {
-              Text(item.model, style = MaterialTheme.typography.labelMedium)
-              Text(
-                item.prompt,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-              )
-              Text(
-                timeFmt.format(Date(item.createdAtMs)),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-              )
+          Column(Modifier.fillMaxWidth()) {
+            TextButton(
+              onClick = { vm.restoreMediaHistoryItem(item) },
+              modifier = Modifier.fillMaxWidth(),
+            ) {
+              Column(Modifier.fillMaxWidth()) {
+                Text(item.model, style = MaterialTheme.typography.labelMedium)
+                Text(
+                  item.prompt,
+                  style = MaterialTheme.typography.bodySmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  maxLines = 2,
+                )
+                Text(
+                  timeFmt.format(Date(item.createdAtMs)),
+                  style = MaterialTheme.typography.labelSmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+              }
+            }
+            if (item.kind == MediaKind.Image && item.imageDataUrl != null) {
+              Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(
+                  onClick = {
+                    Haptics.success(view)
+                    vm.useMediaHistoryInChat(item)
+                  },
+                ) {
+                  Text("Use in chat")
+                }
+                TextButton(
+                  onClick = {
+                    Haptics.success(view)
+                    vm.animateMediaHistory(item)
+                  },
+                ) {
+                  Text("Animate")
+                }
+              }
             }
           }
         }

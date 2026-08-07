@@ -213,7 +213,9 @@ class ControlPlaneClientTest {
     assertEquals("/v1/images/generations", imgReq.path)
     assertTrue(imgReq.body.readUtf8().contains("cube"))
 
-    val vid = c.generateVideo(model = "xai/grok-imagine-video", prompt = "waves")
+    // Explicit sync for unit test fixture that returns a ready URL.
+    val vid =
+      c.generateVideo(model = "xai/grok-imagine-video", prompt = "waves", async = false)
     assertEquals("https://example.com/v.mp4", vid.video)
     val vidReq = server.takeRequest()
     assertEquals("/v1/videos/generations", vidReq.path)

@@ -6,12 +6,12 @@ Guidance for agents working in this repository.
 
 **AGPL Android client for Prism.** Metered inference against
 [prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane). History / RAG /
-artifacts remain on [prism](https://github.com/skyphusion-labs/prism) (not yet wired in the app).
+artifacts remain on [prism](https://github.com/skyphusion-labs/prism) (developer playground only
+in the app).
 
-**v0.8.0:** iOS 0.8.4 deltas -- biometric lock, per-request cost, chat live STT,
-import merge/replace, balance widget. Prior 0.7.0: Usage, rate preview, camera/clipboard,
-video notify. Beta: `docs/PLAY-INTERNAL.md`.
-Grok video **0.4.14+**; Play redeem **0.4.16+**; plane vision multiparty **0.4.23+**.
+**v1.0.0:** iOS 1.0.0 parity -- async media jobs, video duration picker, Use in chat / Animate /
+inline text attach, Play Billing, biometric, Usage, live STT. Docs: `docs/ARCHITECTURE.md`,
+`docs/MODELS.md`, `docs/RELEASE-1.0.md`, `docs/PLAY-INTERNAL.md`.
 
 ## Related
 
@@ -19,23 +19,26 @@ Grok video **0.4.14+**; Play redeem **0.4.16+**; plane vision multiparty **0.4.2
 | --- | --- |
 | [prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane) | Metered inference -- primary target |
 | [prism](https://github.com/skyphusion-labs/prism) | Playground Worker |
-| [prism-ios](https://github.com/skyphusion-labs/prism-ios) | Sibling Swift kit + shell (feature lead) |
+| [prism-ios](https://github.com/skyphusion-labs/prism-ios) | Sibling Swift kit + shell |
 | [prism-mcp](https://github.com/skyphusion-labs/prism-mcp) | Agent MCP door |
 
 ## Layout
 
 - `prism-kit` -- JVM (OkHttp, kotlinx.serialization, coroutines)
-  - `ControlPlaneClient` (chat SSE, image, video, speech, STT, music)
+  - `ControlPlaneClient` (chat SSE, image, video, speech, STT, music, jobs, redeem)
   - `PrismClient` (playground auth, models, chat/stream, compact)
-  - `ConversationCompact`, `HttpJson`, `SseParser`, `Models`, `SecretStore`
+  - `VideoClipDuration`, `ConversationCompact`, `HttpJson`, `SseParser`, `Models`, `SecretStore`
 - `app` -- Android application (Compose Material3)
-  - enroll or playground login / Chat·Image·Video·More / sessions / settings
+  - enroll / Chat·Image·Video·More / sessions / settings / BillingManager
 
 ## Commands
 
 ```bash
+export JAVA_HOME="$(brew --prefix openjdk@17)/libexec/openjdk.jdk/Contents/Home"
 ./gradlew :prism-kit:test --no-daemon
-./gradlew :app:assembleDebug --no-daemon   # needs Android SDK
+./gradlew :app:assembleDebug --no-daemon
+./gradlew :app:bundleRelease --no-daemon   # keystore.properties gitignored
+python3 scripts/full-model-matrix-smoke.py
 ```
 
 ## CI
@@ -48,6 +51,7 @@ Grok video **0.4.14+**; Play redeem **0.4.16+**; plane vision multiparty **0.4.2
 
 - Auth: `Authorization: Bearer pcp_<key_id>_<secret>` only
 - Branch on `spendable` for model picker
+- STT body is JSON `{ model, audio }` (data URL or base64), not multipart
 - `client_revoked` / 401: clear stored key, return to enroll
 - Never log device keys or enrollment tokens
 - Never a plaintext secret in a tracked file
@@ -60,6 +64,6 @@ Grok video **0.4.14+**; Play redeem **0.4.16+**; plane vision multiparty **0.4.2
 
 ## Release / deploy
 
-**Tag-gated production deploy.** Merges to `main` run CI only; they do not ship production.
-Cut an annotated SemVer tag on `main` to release (`git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`).
-Deploy workflows assert the tag commit is an ancestor of `origin/main`.
+**Tag-gated production narrative.** Merge feature PR to `main`, then annotated SemVer tag
+`vX.Y.Z` for GitHub Release. Play Internal: signed AAB via `bundleRelease` + Console upload
+(`docs/PLAY-INTERNAL.md`, `docs/RELEASE-1.0.md`).
