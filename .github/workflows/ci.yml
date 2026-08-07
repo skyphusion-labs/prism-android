@@ -25,6 +25,8 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v5
       - run: ./gradlew :prism-kit:test --no-daemon
+      - name: RED-DRIVE deliberate failure (fc#1612 control, never merged)
+        run: exit 1
 
   app:
     name: app
