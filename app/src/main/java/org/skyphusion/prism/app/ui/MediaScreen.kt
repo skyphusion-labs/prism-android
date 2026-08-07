@@ -282,7 +282,7 @@ fun MediaScreen(
               DropdownMenuItem(
                 text = { Text("${sec}s") },
                 onClick = {
-                  vm.setVideoDurationSeconds(sec)
+                  vm.updateVideoDurationSeconds(sec)
                   durationExpanded = false
                 },
               )
@@ -428,6 +428,22 @@ fun MediaScreen(
             ) {
               Text("Save to Photos")
             }
+            TextButton(
+              onClick = {
+                Haptics.success(view)
+                vm.useLastImageInChat()
+              },
+            ) {
+              Text("Use in chat")
+            }
+            TextButton(
+              onClick = {
+                Haptics.success(view)
+                vm.animateLastImage()
+              },
+            ) {
+              Text("Animate")
+            }
           }
           vm.lastImageUrl?.let { url ->
             TextButton(
@@ -529,28 +545,50 @@ fun MediaScreen(
           }
         }
         Text(
-          "Newest first. Tap to restore. Not saved across launches.",
+          "Newest first. Tap to restore. Use in chat / Animate hand off to Chat or Video. Session-only.",
           style = MaterialTheme.typography.labelSmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         history.forEach { item ->
-          TextButton(
-            onClick = { vm.restoreMediaHistoryItem(item) },
-            modifier = Modifier.fillMaxWidth(),
-          ) {
-            Column(Modifier.fillMaxWidth()) {
-              Text(item.model, style = MaterialTheme.typography.labelMedium)
-              Text(
-                item.prompt,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-              )
-              Text(
-                timeFmt.format(Date(item.createdAtMs)),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-              )
+          Column(Modifier.fillMaxWidth()) {
+            TextButton(
+              onClick = { vm.restoreMediaHistoryItem(item) },
+              modifier = Modifier.fillMaxWidth(),
+            ) {
+              Column(Modifier.fillMaxWidth()) {
+                Text(item.model, style = MaterialTheme.typography.labelMedium)
+                Text(
+                  item.prompt,
+                  style = MaterialTheme.typography.bodySmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  maxLines = 2,
+                )
+                Text(
+                  timeFmt.format(Date(item.createdAtMs)),
+                  style = MaterialTheme.typography.labelSmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+              }
+            }
+            if (item.kind == MediaKind.Image && item.imageDataUrl != null) {
+              Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(
+                  onClick = {
+                    Haptics.success(view)
+                    vm.useMediaHistoryInChat(item)
+                  },
+                ) {
+                  Text("Use in chat")
+                }
+                TextButton(
+                  onClick = {
+                    Haptics.success(view)
+                    vm.animateMediaHistory(item)
+                  },
+                ) {
+                  Text("Animate")
+                }
+              }
             }
           }
         }

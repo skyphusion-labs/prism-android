@@ -232,18 +232,30 @@ class ControlPlaneClient(
 
   // --- Image / video (unit-priced) ---
 
-  /** `POST /v1/images/generations` -- `data[].b64_json` and/or `data[].url`. */
+  /**
+   * `POST /v1/images/generations` -- `data[].b64_json`/`url`, or 202 job (gpt-image-2 / async).
+   * When [ImageGenerationRequest.async] is true, sends Prefer: respond-async.
+   */
   fun generateImage(request: ImageGenerationRequest): ImageGenerationResponse {
     val key = requireKey()
+    val async = request.async == true
+    val client = if (async) enqueueHttp else mediaHttp
+    val headers = if (async) mapOf("Prefer" to "respond-async") else emptyMap()
     val (body, _) =
-      mediaHttp.send<ImageGenerationRequest, ImageGenerationResponse>(
+      client.send<ImageGenerationRequest, ImageGenerationResponse>(
         "POST",
         "/v1/images/generations",
         body = request,
         bearer = key,
+        headers = headers,
+        okStatuses = (200..299).toSet(),
       )
     body.error?.let { err ->
       throw PrismError.Server(err.message ?: err.code ?: "image generation error")
+    }
+    if (body.isAsyncAccept) {
+      if (body.id.isNullOrBlank()) throw PrismError.Server("Async image job missing id")
+      return body
     }
     if (body.firstBase64 == null && body.firstDisplayUrl == null) {
       throw PrismError.Server("Empty image payload")
@@ -251,8 +263,15 @@ class ControlPlaneClient(
     return body
   }
 
-  fun generateImage(model: String, prompt: String, image: String? = null): ImageGenerationResponse =
-    generateImage(ImageGenerationRequest(model = model, prompt = prompt, image = image))
+  fun generateImage(
+    model: String,
+    prompt: String,
+    image: String? = null,
+    async: Boolean? = null,
+  ): ImageGenerationResponse =
+    generateImage(
+      ImageGenerationRequest(model = model, prompt = prompt, image = image, async = async),
+    )
 
   /**
    * `POST /v1/videos/generations`. Prefer [async] true (plane 0.4.29+): 202 + job id.
@@ -295,7 +314,8 @@ class ControlPlaneClient(
     prompt: String? = null,
     image: String? = null,
     async: Boolean = true,
-    duration: kotlinx.serialization.json.JsonElement? = null,
+    /** Clip length in seconds; wired per-model (int or Veo "Ns"). Null = model default. */
+    durationSeconds: Int? = null,
   ): VideoGenerationResponse =
     generateVideo(
       VideoGenerationRequest(
@@ -303,7 +323,12 @@ class ControlPlaneClient(
         prompt = prompt,
         image = image,
         async = async,
-        duration = duration ?: VideoClipDuration.forModel(model),
+        duration =
+          if (durationSeconds != null) {
+            VideoClipDuration.wire(model, durationSeconds)
+          } else {
+            VideoClipDuration.forModel(model)
+          },
       ),
     )
 

@@ -13,12 +13,12 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import org.skyphusion.prism.app.AppViewModel
+import org.skyphusion.prism.app.MainTab
 import org.skyphusion.prism.app.MediaKind
 
 /** Destinations under the More hub (not primary tabs). */
@@ -35,36 +35,35 @@ fun PlaneShell(
   onOpenSettings: () -> Unit,
   onOpenSessions: () -> Unit = {},
 ) {
-  // 0 Chat, 1 Image, 2 Video, 3 More (hub / audio / music)
-  var tab by rememberSaveable { mutableIntStateOf(0) }
   var moreDest by rememberSaveable { mutableStateOf(MoreDest.Hub.name) }
   val more = MoreDest.entries.find { it.name == moreDest } ?: MoreDest.Hub
+  val tab = vm.selectedTab
 
   Scaffold(
     bottomBar = {
       NavigationBar {
         NavigationBarItem(
-          selected = tab == 0,
-          onClick = { tab = 0 },
+          selected = tab == MainTab.Chat,
+          onClick = { vm.selectedTab = MainTab.Chat },
           icon = { Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null) },
           label = { Text("Chat") },
         )
         NavigationBarItem(
-          selected = tab == 1,
-          onClick = { tab = 1 },
+          selected = tab == MainTab.Image,
+          onClick = { vm.selectedTab = MainTab.Image },
           icon = { Icon(Icons.Default.Photo, contentDescription = null) },
           label = { Text("Image") },
         )
         NavigationBarItem(
-          selected = tab == 2,
-          onClick = { tab = 2 },
+          selected = tab == MainTab.Video,
+          onClick = { vm.selectedTab = MainTab.Video },
           icon = { Icon(Icons.Default.Movie, contentDescription = null) },
           label = { Text("Video") },
         )
         NavigationBarItem(
-          selected = tab == 3,
+          selected = tab == MainTab.More,
           onClick = {
-            tab = 3
+            vm.selectedTab = MainTab.More
             moreDest = MoreDest.Hub.name
           },
           icon = { Icon(Icons.Default.MoreHoriz, contentDescription = null) },
@@ -75,15 +74,15 @@ fun PlaneShell(
   ) { padding ->
     androidx.compose.foundation.layout.Box(Modifier.padding(padding)) {
       when (tab) {
-        0 ->
+        MainTab.Chat ->
           ChatScreen(
             vm = vm,
             onOpenSettings = onOpenSettings,
             onOpenSessions = onOpenSessions,
           )
-        1 -> MediaScreen(vm = vm, kind = MediaKind.Image, onOpenSettings = onOpenSettings)
-        2 -> MediaScreen(vm = vm, kind = MediaKind.Video, onOpenSettings = onOpenSettings)
-        else ->
+        MainTab.Image -> MediaScreen(vm = vm, kind = MediaKind.Image, onOpenSettings = onOpenSettings)
+        MainTab.Video -> MediaScreen(vm = vm, kind = MediaKind.Video, onOpenSettings = onOpenSettings)
+        MainTab.More ->
           when (more) {
             MoreDest.Hub ->
               MoreHubScreen(

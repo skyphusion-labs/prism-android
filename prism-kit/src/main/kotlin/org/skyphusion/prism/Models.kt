@@ -686,6 +686,11 @@ data class ImageGenerationRequest(
   val prompt: String,
   /** Optional https or data: URL for i2i / edit models. */
   val image: String? = null,
+  /**
+   * When true (plane 0.4.35+), returns 202 job id; poll [AsyncJobResponse].
+   * gpt-image-2 is always async on the plane even without this flag.
+   */
+  val async: Boolean? = null,
 )
 
 @Serializable
@@ -694,6 +699,10 @@ data class ImageGenerationResponse(
   val model: String? = null,
   val data: List<ImageGenerationData>? = null,
   val error: ControlPlaneErrorBody? = null,
+  /** Present on 202 async accept (plane 0.4.35+). */
+  val id: String? = null,
+  val status: String? = null,
+  val kind: String? = null,
 ) {
   @Serializable
   data class ImageGenerationData(
@@ -721,6 +730,10 @@ data class ImageGenerationResponse(
       if (raw != null && (raw.startsWith("http://") || raw.startsWith("https://"))) return raw
       return null
     }
+
+  /** True when this is a 202 job accept (no image payload yet). */
+  val isAsyncAccept: Boolean
+    get() = !id.isNullOrBlank() && firstBase64 == null && firstDisplayUrl == null
 }
 
 @Serializable
@@ -778,7 +791,29 @@ data class AsyncJobResult(
   val rehosted: Boolean? = null,
   val format: String? = null,
   @SerialName("audio_base64") val audioBase64: String? = null,
-)
+  /** Async image jobs (plane 0.4.35+): OpenAI-ish `data[].url` / `data[].b64_json`. */
+  val data: List<ImageGenerationResponse.ImageGenerationData>? = null,
+  val created: Long? = null,
+) {
+  val firstImageUrl: String?
+    get() {
+      data?.firstOrNull()?.url?.takeIf { it.isNotEmpty() }?.let { return it }
+      val raw = data?.firstOrNull()?.b64Json
+      if (raw != null && (raw.startsWith("http://") || raw.startsWith("https://"))) return raw
+      return null
+    }
+
+  val firstImageBase64: String?
+    get() {
+      val raw = data?.firstOrNull()?.b64Json?.takeIf { it.isNotEmpty() } ?: return null
+      if (raw.startsWith("http://") || raw.startsWith("https://")) return null
+      if (raw.startsWith("data:image/")) {
+        val idx = raw.indexOf("base64,")
+        if (idx >= 0) return raw.substring(idx + "base64,".length)
+      }
+      return raw
+    }
+}
 
 // --- Speech TTS (`POST /v1/audio/speech`) ---
 

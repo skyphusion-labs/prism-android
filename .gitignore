@@ -14,3 +14,4 @@ app/release/
 *.aab
 *.apk
 !gradle/wrapper/**
+smoke-results/

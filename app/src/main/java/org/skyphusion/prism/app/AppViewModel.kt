@@ -80,6 +80,14 @@ data class ChatTurn(
 
 enum class MediaKind { Image, Video }
 
+/** Primary plane-shell tabs (Image/Video ↔ Chat handoffs). */
+enum class MainTab {
+  Chat,
+  Image,
+  Video,
+  More,
+}
+
 /** One generated image/video kept in-session for history / re-use (cap 20). */
 data class MediaHistoryItem(
   val id: String = UUID.randomUUID().toString(),
@@ -90,6 +98,23 @@ data class MediaHistoryItem(
   val imageBase64: String? = null,
   val imageUrl: String? = null,
   val videoUrl: String? = null,
+) {
+  /** Prefer data: URL, else https, for chat attach / i2v handoff. */
+  val imageDataUrl: String?
+    get() {
+      val b64 = imageBase64?.takeIf { it.isNotEmpty() }
+      if (b64 != null) {
+        return if (b64.startsWith("data:")) b64 else "data:image/png;base64,$b64"
+      }
+      return imageUrl?.takeIf { it.isNotEmpty() }
+    }
+}
+
+/** Staged text file for the next chat turn (inlined into prompt; not RAG). */
+data class DraftDocument(
+  val id: String = UUID.randomUUID().toString(),
+  val name: String,
+  val text: String,
 )
 
 /**
@@ -166,6 +191,11 @@ class AppViewModel(
   /** Pending chat image attachments (data URLs) for the next send. Cap 3. */
   var draftImageDataUrls = mutableStateListOf<String>()
     private set
+  /** Pending text files for the next send (inlined; not Vectorize). Cap 3. */
+  var draftDocuments = mutableStateListOf<DraftDocument>()
+    private set
+  /** Plane shell tab selection (handoffs jump Chat / Image / Video). */
+  var selectedTab by mutableStateOf(MainTab.Chat)
   var serverSyncBusy by mutableStateOf(false)
     private set
   var serverSyncMessage by mutableStateOf<String?>(null)
@@ -1627,11 +1657,14 @@ class AppViewModel(
       SendMode.NewFromDraft -> {
         val t = draft.trim()
         val imgs = draftImageDataUrls.toList()
-        if (t.isEmpty() && imgs.isEmpty()) return
-        text = if (t.isEmpty()) "(image)" else t
+        val docs = draftDocuments.toList()
+        if (t.isEmpty() && imgs.isEmpty() && docs.isEmpty()) return
+        val base = if (t.isEmpty() && imgs.isNotEmpty()) "(image)" else t
+        text = consumeDraftDocumentsIntoText(base, docs)
         sendImages = imgs
         draft = ""
         draftImageDataUrls.clear()
+        draftDocuments.clear()
         clearChatFailure()
         turns.add(
           ChatTurn(
@@ -1846,12 +1879,21 @@ class AppViewModel(
       mediaError = "This model needs a reference image (https or data: URL)."
       return
     }
+    // gpt-image-2 (and other plane auto-async models) return 202; Prefer helps long gens.
+    val preferAsync = modelId == "openai/gpt-image-2" || modelId.contains("gpt-image")
     mediaJob?.cancel()
     mediaJob =
       viewModelScope.launch {
         mediaBusy = true
         mediaError = null
-        mediaStatus = "Generating image…"
+        mediaStatus =
+          if (preferAsync) {
+            "Generating $modelId… · plane job (safe to lock)"
+          } else {
+            "Generating $modelId…"
+          }
+        lastImageUrl = null
+        lastImageBase64 = null
         startMediaTimer()
         try {
           val res =
@@ -1860,31 +1902,96 @@ class AppViewModel(
                 model = modelId,
                 prompt = prompt,
                 image = imageImageRef.trim().ifEmpty { null },
+                async = if (preferAsync) true else null,
               )
             }
-          lastImageUrl = res.firstDisplayUrl
-          lastImageBase64 = res.firstBase64
-          mediaStatus = "Image ready"
-          pushMediaHistory(
-            MediaHistoryItem(
-              kind = MediaKind.Image,
-              model = modelId,
-              prompt = prompt,
-              imageBase64 = res.firstBase64,
-              imageUrl = res.firstDisplayUrl,
-            ),
-          )
+          if (res.isAsyncAccept) {
+            val id = res.id!!
+            secrets.set(SecretStoreKeys.PENDING_IMAGE_JOB_ID, id)
+            secrets.set(SecretStoreKeys.PENDING_IMAGE_JOB_MODEL, modelId)
+            mediaStatus = "Plane job ${id.take(12)}… · runs on plane (lock OK)"
+            finishImageJob(id, modelId, prompt)
+            return@launch
+          }
+          applyImageResult(res.firstBase64, res.firstDisplayUrl, res.model ?: modelId, prompt)
           refreshAccount()
         } catch (e: Exception) {
-          if (e is kotlinx.coroutines.CancellationException) throw e
+          if (e is kotlinx.coroutines.CancellationException) {
+            if (!secrets.get(SecretStoreKeys.PENDING_IMAGE_JOB_ID).isNullOrBlank()) {
+              mediaStatus = "Plane job continues · re-checks when app is active"
+              mediaError = null
+            } else {
+              mediaError = "Cancelled"
+              mediaStatus = "Cancelled after ${mediaElapsedSeconds}s"
+            }
+            return@launch
+          }
           handleAuthError(e)
-          mediaError = e.toUserMessage()
-          mediaStatus = null
+          if (!secrets.get(SecretStoreKeys.PENDING_IMAGE_JOB_ID).isNullOrBlank()) {
+            mediaStatus = "Plane job continues · re-checks when app is active"
+            mediaError = null
+          } else {
+            clearPendingImageJob()
+            mediaError = e.toUserMessage()
+            mediaStatus = "Failed after ${mediaElapsedSeconds}s · prompt kept for Retry"
+          }
         } finally {
           stopMediaTimer()
           mediaBusy = false
         }
       }
+  }
+
+  private suspend fun finishImageJob(id: String, modelId: String, prompt: String) {
+    val job =
+      withContext(Dispatchers.IO) {
+        client.waitForJob(id, timeoutMs = ControlPlaneClient.JOB_POLL_TIMEOUT_MS)
+      }
+    if (!job.isTerminal) throw PrismError.Server("Job still running on the plane")
+    if (!job.isSuccess) {
+      clearPendingImageJob()
+      throw PrismError.Server(job.error?.message ?: job.error?.code ?: "Image job failed")
+    }
+    val b64 = job.result?.firstImageBase64
+    val url = job.result?.firstImageUrl
+    if (b64.isNullOrBlank() && url.isNullOrBlank()) {
+      clearPendingImageJob()
+      throw PrismError.Server("Image job finished with no image")
+    }
+    clearPendingImageJob()
+    applyImageResult(b64, url, job.result?.model ?: job.model ?: modelId, prompt)
+    refreshAccount()
+  }
+
+  private fun applyImageResult(
+    base64: String?,
+    url: String?,
+    modelId: String,
+    prompt: String,
+  ) {
+    lastImageBase64 = base64
+    lastImageUrl = url
+    mediaStatus = "Image ready · $modelId · ${mediaElapsedSeconds}s"
+    pushMediaHistory(
+      MediaHistoryItem(
+        kind = MediaKind.Image,
+        model = modelId,
+        prompt = prompt,
+        imageBase64 = base64,
+        imageUrl = url,
+      ),
+    )
+    NotificationHelper.notifyMedia(
+      appContext,
+      title = "Image ready",
+      body = "$modelId finished in ${mediaElapsedSeconds}s",
+      success = true,
+    )
+  }
+
+  private fun clearPendingImageJob() {
+    secrets.set(SecretStoreKeys.PENDING_IMAGE_JOB_ID, null)
+    secrets.set(SecretStoreKeys.PENDING_IMAGE_JOB_MODEL, null)
   }
 
   /** Snap [videoDurationSeconds] into the selected model's legal range. */
@@ -1899,7 +2006,7 @@ class AppViewModel(
     persistUIPrefs()
   }
 
-  fun setVideoDurationSeconds(seconds: Int) {
+  fun updateVideoDurationSeconds(seconds: Int) {
     val mid = selectedVideoModelId.orEmpty()
     videoDurationSeconds = VideoClipDuration.limits(mid).clamp(seconds)
   }
@@ -1924,7 +2031,6 @@ class AppViewModel(
     }
     val durationSec = VideoClipDuration.limits(modelId).clamp(videoDurationSeconds)
     videoDurationSeconds = durationSec
-    val durationWire = VideoClipDuration.wire(modelId, durationSec)
     mediaJob?.cancel()
     mediaJob =
       viewModelScope.launch {
@@ -1943,7 +2049,7 @@ class AppViewModel(
                 prompt = prompt.ifEmpty { null },
                 image = image,
                 async = true,
-                duration = durationWire,
+                durationSeconds = durationSec,
               )
             }
           if (res.isAsyncAccept) {
@@ -2043,17 +2149,192 @@ class AppViewModel(
     mediaJob = null
     // Explicit cancel drops tracking (job may still finish server-side).
     clearPendingVideoJob()
+    clearPendingImageJob()
     stopMediaTimer()
     mediaBusy = false
     mediaStatus = "Cancelled"
   }
 
   fun useLastImageAsReference(forVideo: Boolean) {
-    val ref =
-      lastImageUrl
-        ?: lastImageBase64?.let { "data:image/png;base64,$it" }
-        ?: return
+    val ref = lastImageAsDataUrl() ?: return
     if (forVideo) videoImageRef = ref else imageImageRef = ref
+  }
+
+  private fun lastImageAsDataUrl(): String? {
+    val b64 = lastImageBase64?.takeIf { it.isNotEmpty() }
+    if (b64 != null) {
+      return if (b64.startsWith("data:")) b64 else "data:image/png;base64,$b64"
+    }
+    return lastImageUrl?.takeIf { it.isNotEmpty() }
+  }
+
+  // --- Cross-modal handoffs (Image ↔ Chat ↔ Video; iOS 1.0 parity) ---
+
+  /** Last generated image → chat draft; jump to Chat. */
+  fun useLastImageInChat() {
+    val url = lastImageAsDataUrl()
+    if (url == null) {
+      errorMessage = "No generated image to send to chat."
+      return
+    }
+    if (!attachChatImageDataUrl(url)) return
+    if (draft.trim().isEmpty()) draft = "Describe this image."
+    selectedTab = MainTab.Chat
+    banner = "Image attached to chat draft"
+  }
+
+  /** Media history image → chat draft. */
+  fun useMediaHistoryInChat(item: MediaHistoryItem) {
+    if (item.kind != MediaKind.Image) {
+      errorMessage = "That history item has no image."
+      return
+    }
+    val url = item.imageDataUrl
+    if (url == null) {
+      errorMessage = "That history item has no image."
+      return
+    }
+    if (!attachChatImageDataUrl(url)) return
+    if (draft.trim().isEmpty()) draft = "Describe this image."
+    selectedTab = MainTab.Chat
+    banner = "Image attached to chat draft"
+  }
+
+  /** Last generated image → Video i2v first frame; jump to Video. */
+  fun animateLastImage() {
+    if (lastImageAsDataUrl() == null) {
+      errorMessage = "No generated image to animate."
+      return
+    }
+    useLastImageAsReference(forVideo = true)
+    selectedTab = MainTab.Video
+    banner = "Image set as video first frame"
+  }
+
+  /** Media history image → Video i2v. */
+  fun animateMediaHistory(item: MediaHistoryItem) {
+    if (item.kind != MediaKind.Image) {
+      errorMessage = "That history item has no image."
+      return
+    }
+    val url = item.imageDataUrl
+    if (url == null) {
+      errorMessage = "That history item has no image."
+      return
+    }
+    videoImageRef = url
+    selectedTab = MainTab.Video
+    banner = "Image set as video first frame"
+  }
+
+  /** Chat draft attachment → Video i2v. */
+  fun animateChatDraftImage(at: Int) {
+    if (at !in draftImageDataUrls.indices) return
+    videoImageRef = draftImageDataUrls[at]
+    selectedTab = MainTab.Video
+    banner = "Chat image set as video first frame"
+  }
+
+  /** Chat turn image(s) → Video i2v (uses first URL). */
+  fun animateChatTurnImages(urls: List<String>) {
+    val first = urls.firstOrNull { it.isNotBlank() }
+    if (first == null) {
+      errorMessage = "No image on that message."
+      return
+    }
+    videoImageRef = first
+    selectedTab = MainTab.Video
+    banner = "Chat image set as video first frame"
+  }
+
+  /**
+   * Attach an existing data:/https image URL to the next chat send.
+   * Cap 3; de-dupes exact URLs.
+   */
+  fun attachChatImageDataUrl(dataUrl: String): Boolean {
+    val trimmed = dataUrl.trim()
+    if (trimmed.isEmpty()) return false
+    if (draftImageDataUrls.size >= 3) {
+      errorMessage = "At most 3 images per message."
+      return false
+    }
+    if (draftImageDataUrls.contains(trimmed)) return true
+    draftImageDataUrls.add(trimmed)
+    return true
+  }
+
+  /** Stage a UTF-8 text file for the next chat turn (inlined; not Vectorize/RAG). */
+  fun attachChatDocument(name: String, data: ByteArray): Boolean {
+    if (draftDocuments.size >= DRAFT_DOCUMENT_MAX_COUNT) {
+      errorMessage = "At most $DRAFT_DOCUMENT_MAX_COUNT text files per message."
+      return false
+    }
+    val raw =
+      try {
+        String(data, Charsets.UTF_8)
+      } catch (_: Exception) {
+        null
+      }
+        ?: try {
+          String(data, Charsets.ISO_8859_1)
+        } catch (_: Exception) {
+          null
+        }
+    if (raw == null) {
+      errorMessage = "Could not read $name as text. Use UTF-8 / plain text, not binary."
+      return false
+    }
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) {
+      errorMessage = "File is empty."
+      return false
+    }
+    val sample = trimmed.take(4000)
+    val control =
+      sample.count { ch ->
+        val v = ch.code
+        v < 32 && v != 9 && v != 10 && v != 13
+      }
+    if (control > sample.length / 10) {
+      errorMessage =
+        "$name looks binary. Attach images via the photo menu, or use a text file."
+      return false
+    }
+    var text = trimmed
+    if (text.length > DRAFT_DOCUMENT_MAX_CHARS) {
+      text =
+        text.take(DRAFT_DOCUMENT_MAX_CHARS) +
+          "\n\n…[truncated at $DRAFT_DOCUMENT_MAX_CHARS characters]"
+    }
+    val safeName = name.ifBlank { "document.txt" }
+    draftDocuments.add(DraftDocument(name = safeName, text = text))
+    return true
+  }
+
+  fun removeDraftDocument(id: String) {
+    draftDocuments.removeAll { it.id == id }
+  }
+
+  fun clearDraftDocuments() {
+    draftDocuments.clear()
+  }
+
+  /** Fold staged documents into the user message (fenced blocks). */
+  private fun consumeDraftDocumentsIntoText(
+    userText: String,
+    docs: List<DraftDocument>,
+  ): String {
+    if (docs.isEmpty()) return userText
+    val blocks =
+      docs.map { doc ->
+        "```${doc.name}\n${doc.text}\n```"
+      }
+    val body = userText.trim()
+    return if (body.isEmpty()) {
+      blocks.joinToString("\n\n")
+    } else {
+      body + "\n\n" + blocks.joinToString("\n\n")
+    }
   }
 
   fun restoreMediaHistoryItem(item: MediaHistoryItem) {
@@ -2818,6 +3099,72 @@ class AppViewModel(
       secrets.get(SecretStoreKeys.PENDING_SPEECH_JOB_ID)?.takeIf { it.isNotBlank() }?.let { id ->
         syncOnePendingSpeechJob(id)
       }
+      secrets.get(SecretStoreKeys.PENDING_IMAGE_JOB_ID)?.takeIf { it.isNotBlank() }?.let { id ->
+        syncOnePendingImageJob(id)
+      }
+    }
+  }
+
+  private suspend fun syncOnePendingImageJob(id: String) {
+    val model = secrets.get(SecretStoreKeys.PENDING_IMAGE_JOB_MODEL) ?: "image"
+    val prompt = imagePrompt.trim()
+    try {
+      val job = withContext(Dispatchers.IO) { client.getJob(id) }
+      if (job.isTerminal) {
+        mediaJob?.cancel()
+        mediaBusy = true
+        startMediaTimer()
+        try {
+          if (job.isSuccess) {
+            val b64 = job.result?.firstImageBase64
+            val url = job.result?.firstImageUrl
+            if (!b64.isNullOrBlank() || !url.isNullOrBlank()) {
+              clearPendingImageJob()
+              applyImageResult(b64, url, job.result?.model ?: job.model ?: model, prompt)
+              mediaError = null
+              refreshAccount()
+            } else {
+              clearPendingImageJob()
+              mediaError = "Empty image in job result"
+              mediaStatus = "Failed"
+            }
+          } else {
+            clearPendingImageJob()
+            mediaError = job.error?.message ?: job.error?.code ?: "Image job failed"
+            mediaStatus = "Failed"
+            NotificationHelper.notifyMedia(appContext, "Image failed", mediaError!!, false)
+          }
+        } finally {
+          stopMediaTimer()
+          mediaBusy = false
+        }
+        return
+      }
+      mediaJob?.cancel()
+      mediaBusy = true
+      mediaError = null
+      mediaStatus = "Plane job ${id.take(12)}… · still running"
+      startMediaTimer()
+      mediaJob =
+        viewModelScope.launch {
+          try {
+            finishImageJob(id, model, prompt)
+          } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) {
+              mediaStatus = "Plane job continues · re-checks when active"
+            } else if (!secrets.get(SecretStoreKeys.PENDING_IMAGE_JOB_ID).isNullOrBlank()) {
+              mediaStatus = "Plane job continues · re-checks when active"
+            } else {
+              mediaError = e.toUserMessage()
+              mediaStatus = "Failed"
+            }
+          } finally {
+            stopMediaTimer()
+            mediaBusy = false
+          }
+        }
+    } catch (_: Exception) {
+      mediaStatus = "Plane job ${id.take(12)}… · re-check pending"
     }
   }
 
@@ -3006,6 +3353,8 @@ class AppViewModel(
 
   companion object {
     private const val MEDIA_HISTORY_CAP = 20
+    const val DRAFT_DOCUMENT_MAX_CHARS = 80_000
+    const val DRAFT_DOCUMENT_MAX_COUNT = 3
 
     /** Empty-state chips; full self-contained prompts (never trailing blanks). */
     val starterPrompts: List<String> =

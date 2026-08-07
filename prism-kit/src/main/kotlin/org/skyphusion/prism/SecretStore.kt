@@ -55,6 +55,8 @@ object SecretStoreKeys {
   const val PENDING_MUSIC_JOB_MODEL = "org.skyphusion.prism.pending.music.job-model"
   const val PENDING_SPEECH_JOB_ID = "org.skyphusion.prism.pending.speech.job-id"
   const val PENDING_SPEECH_JOB_MODEL = "org.skyphusion.prism.pending.speech.job-model"
+  const val PENDING_IMAGE_JOB_ID = "org.skyphusion.prism.pending.image.job-id"
+  const val PENDING_IMAGE_JOB_MODEL = "org.skyphusion.prism.pending.image.job-model"
 }
 
 /** In-memory store (unit tests + non-Android runtimes). Thread-safe. */
