@@ -5,3 +5,12 @@ local.properties
 .idea/
 *.iml
 .DS_Store
+
+# Release signing (never commit)
+keystore.properties
+*.jks
+*.keystore
+app/release/
+*.aab
+*.apk
+!gradle/wrapper/**

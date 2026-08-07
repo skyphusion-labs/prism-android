@@ -8,10 +8,10 @@ Guidance for agents working in this repository.
 [prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane). History / RAG /
 artifacts remain on [prism](https://github.com/skyphusion-labs/prism) (not yet wired in the app).
 
-**v0.8.0:** iOS 0.8.4 deltas -- biometric lock, per-request cost, chat live STT,
-import merge/replace, balance widget. Prior 0.7.0: Usage, rate preview, camera/clipboard,
-video notify. Beta: `docs/PLAY-INTERNAL.md`.
-Grok video **0.4.14+**; Play redeem **0.4.16+**; plane vision multiparty **0.4.23+**.
+**v0.9.0:** iOS 0.8.6–0.8.8 media path -- async plane jobs (video/music/speech),
+force-sync on foreground, Play/Stop, honest long-gen copy, media-ready probe.
+Prior 0.8.x: biometric, legal links, live STT, Usage. Beta: `docs/PLAY-INTERNAL.md`.
+Grok video **0.4.14+** (async **0.4.29+**); Play redeem **0.4.16+**.
 
 ## Related
 

@@ -1,7 +1,6 @@
 package org.skyphusion.prism.app.ui
 
 import android.content.Intent
-import android.media.MediaPlayer
 import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -27,7 +26,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,14 +49,6 @@ fun MusicScreen(
   val context = LocalContext.current
   val view = LocalView.current
   var expanded by remember { mutableStateOf(false) }
-  var player by remember { mutableStateOf<MediaPlayer?>(null) }
-
-  DisposableEffect(Unit) {
-    onDispose {
-      player?.release()
-      player = null
-    }
-  }
 
   Scaffold(
     topBar = {
@@ -172,29 +162,47 @@ fun MusicScreen(
           Text("Open music URL")
         }
       }
-      vm.lastMusicBase64?.let { b64 ->
+      if (vm.lastMusicBase64 != null || vm.lastMusicUrl != null) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
           TextButton(
             onClick = {
-              try {
-                player?.release()
-                player = MediaUtils.playAudioBase64(context, b64, "mp3")
-                Haptics.success(view)
-              } catch (e: Exception) {
-                vm.musicError = e.message ?: "Playback failed"
+              Haptics.light(view)
+              if (vm.lastMusicBase64 != null) {
+                vm.playLastMusic()
+              } else {
+                vm.lastMusicUrl?.let { url ->
+                  context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                }
               }
             },
           ) {
-            Text("Play")
+            Text(if (vm.isMusicPlaying) "Stop" else "Play")
           }
-          TextButton(
-            onClick = {
-              val ok = MediaUtils.shareAudioBase64(context, b64, "mp3")
-              if (ok) Haptics.light(view) else vm.musicError = "Could not share audio"
-            },
-          ) {
-            Text("Share")
+          if (vm.isMusicPlaying) {
+            TextButton(onClick = { vm.stopMusicPlayback() }) {
+              Text("Stop")
+            }
           }
+          vm.lastMusicBase64?.let { b64 ->
+            TextButton(
+              onClick = {
+                val ok = MediaUtils.shareAudioBase64(context, b64, "mp3")
+                if (ok) Haptics.light(view) else vm.musicError = "Could not share audio"
+              },
+            ) {
+              Text("Share")
+            }
+          }
+        }
+      }
+      if (vm.musicBusy) {
+        TextButton(
+          onClick = {
+            Haptics.light(view)
+            vm.cancelMusic()
+          },
+        ) {
+          Text("Cancel generation")
         }
       }
 

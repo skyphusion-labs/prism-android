@@ -270,7 +270,7 @@ fun MediaScreen(
           "Unit-priced image door. Prefer xAI / Flux when available. i2i models need a reference."
         } else {
           "Unit-priced video door. Prefer Seedance Fast / Veo. Hailuo is image-to-video only. " +
-            "Grok video needs plane 0.4.14+ (ZDR)."
+            "Long runs use plane async jobs (lock-safe after job id). Grok needs plane 0.4.14+."
         },
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -284,7 +284,7 @@ fun MediaScreen(
         ) {
           CircularProgressIndicator(modifier = Modifier.height(22.dp), strokeWidth = 2.dp)
           Text(
-            "Generating… ${vm.mediaElapsedSeconds}s",
+            (vm.mediaStatus ?: "Generating…") + " · ${vm.mediaElapsedSeconds}s",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
           )

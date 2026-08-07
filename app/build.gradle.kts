@@ -1,7 +1,17 @@
+import java.util.Properties
+
 plugins {
   id("com.android.application")
   kotlin("android")
   kotlin("plugin.compose")
+}
+
+// Optional release signing: repo-root keystore.properties (gitignored).
+// Keys: storeFile, storePassword, keyAlias, keyPassword
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties()
+if (keystorePropertiesFile.exists()) {
+  keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
 }
 
 android {
@@ -12,9 +22,20 @@ android {
     applicationId = "org.skyphusion.prism"
     minSdk = 26
     targetSdk = 35
-    versionCode = 17
-    versionName = "0.8.1"
+    versionCode = 18
+    versionName = "0.9.0"
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+  }
+
+  signingConfigs {
+    if (keystorePropertiesFile.exists()) {
+      create("release") {
+        storeFile = rootProject.file(keystoreProperties["storeFile"] as String)
+        storePassword = keystoreProperties["storePassword"] as String
+        keyAlias = keystoreProperties["keyAlias"] as String
+        keyPassword = keystoreProperties["keyPassword"] as String
+      }
+    }
   }
 
   buildTypes {
@@ -24,6 +45,9 @@ android {
         getDefaultProguardFile("proguard-android-optimize.txt"),
         "proguard-rules.pro",
       )
+      if (keystorePropertiesFile.exists()) {
+        signingConfig = signingConfigs.getByName("release")
+      }
     }
   }
 

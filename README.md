@@ -22,9 +22,9 @@ AGPL **Android client** for Prism against the commercial control plane
 
 ## Status
 
-**v0.8.1** -- Settings **Legal & open source** (privacy, bundled AGPL LICENSE,
-source links for this app + plane + playground Worker). Prior **0.8.0**: biometric
-lock, per-request cost, chat live STT, import merge/replace, balance widget.
+**v0.9.0** -- iOS 0.8.6–0.8.8 media fixes: plane **async jobs** for video/music/speech
+(poll + persist + force-sync on foreground), honest long-gen copy, 420s budgets,
+Play/Stop for music/TTS, Grok media-ready probe. Prior **0.8.1**: legal links.
 
 **Beta distribution (non-Android-native friendly):** [docs/PLAY-INTERNAL.md](docs/PLAY-INTERNAL.md)
 

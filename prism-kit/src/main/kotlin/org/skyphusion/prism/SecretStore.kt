@@ -47,6 +47,14 @@ object SecretStoreKeys {
   const val WIDGET_BALANCE = "org.skyphusion.prism.widget.balance"
   const val WIDGET_UPDATED_AT = "org.skyphusion.prism.widget.updated-at"
   const val WIDGET_PREFS = "prism_widget"
+
+  /** In-flight plane Workflow job ids (survive process death / cancel so we can resume poll). */
+  const val PENDING_VIDEO_JOB_ID = "org.skyphusion.prism.pending.video.job-id"
+  const val PENDING_VIDEO_JOB_MODEL = "org.skyphusion.prism.pending.video.job-model"
+  const val PENDING_MUSIC_JOB_ID = "org.skyphusion.prism.pending.music.job-id"
+  const val PENDING_MUSIC_JOB_MODEL = "org.skyphusion.prism.pending.music.job-model"
+  const val PENDING_SPEECH_JOB_ID = "org.skyphusion.prism.pending.speech.job-id"
+  const val PENDING_SPEECH_JOB_MODEL = "org.skyphusion.prism.pending.speech.job-model"
 }
 
 /** In-memory store (unit tests + non-Android runtimes). Thread-safe. */

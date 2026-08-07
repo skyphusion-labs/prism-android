@@ -243,11 +243,16 @@ fun AudioScreen(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
           TextButton(
             onClick = {
-              Haptics.success(view)
+              Haptics.light(view)
               vm.playLastSpeech()
             },
           ) {
-            Text("Play")
+            Text(if (vm.isSpeechPlaying) "Stop" else "Play")
+          }
+          if (vm.isSpeechPlaying) {
+            TextButton(onClick = { vm.stopSpeechPlayback() }) {
+              Text("Stop")
+            }
           }
           TextButton(
             onClick = {

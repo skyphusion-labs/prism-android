@@ -729,6 +729,8 @@ data class VideoGenerationRequest(
   val prompt: String? = null,
   /** Optional i2v source (data: or https:). */
   val image: String? = null,
+  /** plane 0.4.29+: 202 + job id instead of holding the connection. */
+  val async: Boolean? = null,
 )
 
 @Serializable
@@ -736,6 +738,40 @@ data class VideoGenerationResponse(
   val model: String? = null,
   val video: String? = null,
   val error: ControlPlaneErrorBody? = null,
+  /** Present on 202 async accept (plane 0.4.29+). */
+  val id: String? = null,
+  val status: String? = null,
+  val kind: String? = null,
+) {
+  val isAsyncAccept: Boolean
+    get() = !id.isNullOrBlank() && video.isNullOrBlank()
+}
+
+// --- Async jobs (`GET /v1/jobs/:id`, plane 0.4.29+) ---
+
+@Serializable
+data class AsyncJobResponse(
+  val id: String,
+  val kind: String? = null,
+  val model: String? = null,
+  val status: String,
+  @SerialName("created_at") val createdAt: String? = null,
+  @SerialName("updated_at") val updatedAt: String? = null,
+  val result: AsyncJobResult? = null,
+  val error: ControlPlaneErrorBody? = null,
+) {
+  val isTerminal: Boolean get() = status == "succeeded" || status == "failed"
+  val isSuccess: Boolean get() = status == "succeeded"
+}
+
+@Serializable
+data class AsyncJobResult(
+  val video: String? = null,
+  val audio: String? = null,
+  val model: String? = null,
+  val rehosted: Boolean? = null,
+  val format: String? = null,
+  @SerialName("audio_base64") val audioBase64: String? = null,
 )
 
 // --- Speech TTS (`POST /v1/audio/speech`) ---
@@ -744,16 +780,24 @@ data class VideoGenerationResponse(
 data class SpeechGenerationRequest(
   val model: String,
   val input: String,
+  /** plane 0.4.32+: Workflow + poll. */
+  val async: Boolean? = null,
 )
 
-/** Plane TTS envelope: base64 audio (typically mp3). */
+/** Plane TTS envelope: base64 audio (typically mp3) or async job accept. */
 @Serializable
 data class SpeechGenerationResponse(
   val model: String? = null,
   @SerialName("audio_base64") val audioBase64: String? = null,
   val format: String? = null,
   val error: ControlPlaneErrorBody? = null,
+  val id: String? = null,
+  val status: String? = null,
+  val kind: String? = null,
 ) {
+  val isAsyncAccept: Boolean
+    get() = !id.isNullOrBlank() && audioBase64.isNullOrBlank()
+
   /** Decoded audio bytes when [audioBase64] is present (strips optional data: prefix). */
   fun audioBytes(): ByteArray? {
     val raw = audioBase64?.takeIf { it.isNotEmpty() } ?: return null
@@ -802,6 +846,8 @@ data class MusicGenerationRequest(
   val model: String,
   val prompt: String,
   val lyrics: String? = null,
+  /** plane 0.4.29+: lock-safe poll. */
+  val async: Boolean? = null,
 )
 
 /** Plane music envelope: `audio` is a URL or inline base64/data asset. */
@@ -810,7 +856,13 @@ data class MusicGenerationResponse(
   val model: String? = null,
   val audio: String? = null,
   val error: ControlPlaneErrorBody? = null,
+  val id: String? = null,
+  val status: String? = null,
+  val kind: String? = null,
 ) {
+  val isAsyncAccept: Boolean
+    get() = !id.isNullOrBlank() && audio.isNullOrBlank()
+
   fun audioBytes(): ByteArray? {
     val raw = audio?.takeIf { it.isNotEmpty() } ?: return null
     if (raw.startsWith("http://") || raw.startsWith("https://")) return null
