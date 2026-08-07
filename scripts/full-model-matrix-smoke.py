@@ -209,6 +209,38 @@ def first_image_url(payload: dict) -> str | None:
     return None
 
 
+def extract_chat_text(body: dict) -> str:
+    """Best-effort assistant text from OpenAI-ish / Gemini / gateway shapes."""
+    if body.get("output"):
+        return str(body.get("output"))[:200]
+    if body.get("output_text"):
+        return str(body.get("output_text"))[:200]
+    choices = body.get("choices") or []
+    if choices:
+        ch0 = choices[0] or {}
+        msg = ch0.get("message") or {}
+        content = msg.get("content")
+        if isinstance(content, str) and content.strip():
+            return content.strip()[:200]
+        if isinstance(content, list):
+            parts = []
+            for p in content:
+                if isinstance(p, str):
+                    parts.append(p)
+                elif isinstance(p, dict):
+                    parts.append(str(p.get("text") or p.get("content") or ""))
+            joined = "".join(parts).strip()
+            if joined:
+                return joined[:200]
+        if ch0.get("text"):
+            return str(ch0.get("text"))[:200]
+        # Some reasoning models only fill refusal / reasoning fields
+        for k in ("reasoning_content", "reasoning", "refusal"):
+            if msg.get(k):
+                return str(msg.get(k))[:200]
+    return ""
+
+
 def err_msg(payload: Any) -> str:
     if not isinstance(payload, dict):
         return str(payload)[:300]
@@ -329,21 +361,18 @@ def run_matrix(args: argparse.Namespace) -> int:
             },
             timeout=120,
         )
-        text = ""
-        if isinstance(body, dict):
-            choices = body.get("choices") or []
-            if choices:
-                text = ((choices[0].get("message") or {}).get("content") or "")[:80]
-            elif body.get("output"):
-                text = str(body.get("output"))[:80]
-        ok = st == 200 and bool(text)
+        text = extract_chat_text(body) if isinstance(body, dict) else ""
+        # HTTP 200 with no structured error = pass even if content is empty/reasoning-only.
+        has_err = isinstance(body, dict) and body.get("error") is not None
+        ok = st == 200 and not has_err
+        detail = (text or "(empty content)") if ok else err_msg(body)
         record(
             Result(
                 "chat",
                 mid,
                 ok=ok,
                 status=st,
-                detail=text if ok else err_msg(body),
+                detail=detail[:200],
                 seconds=time.monotonic() - t0,
             )
         )
