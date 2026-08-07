@@ -1387,7 +1387,8 @@ class AppViewModel(
           }
         val t = res.text?.trim().orEmpty()
         if (t.isEmpty()) {
-          errorMessage = "Empty transcript."
+          // Plane returns 200 + "" for silence; not a transport failure.
+          errorMessage = "No speech detected. Try a longer clip or a different STT model."
           return@launch
         }
         lastTranscript = t
@@ -2805,8 +2806,14 @@ class AppViewModel(
           withContext(Dispatchers.IO) {
             client.transcribe(model = modelId, audio = audio)
           }
-        lastTranscript = res.text
-        speechStatus = "Transcript ready"
+        val t = res.text?.trim().orEmpty()
+        lastTranscript = t
+        speechStatus =
+          if (t.isEmpty()) {
+            "No speech detected (silence or format)."
+          } else {
+            "Transcript ready"
+          }
         refreshAccount()
       } catch (e: Exception) {
         if (e is kotlinx.coroutines.CancellationException) throw e

@@ -453,7 +453,11 @@ class ControlPlaneClient(
   fun generateSpeech(model: String, input: String, async: Boolean = true): SpeechGenerationResponse =
     generateSpeech(SpeechGenerationRequest(model = model, input = input, async = async))
 
-  /** `POST /v1/audio/transcriptions` -- metered STT; [audio] is base64 or data: URL. */
+  /**
+   * `POST /v1/audio/transcriptions` -- metered STT; [audio] is base64 or data: URL (JSON body).
+   * Silence / empty transcript is a successful 200 with blank [TranscriptionResponse.text]
+   * (plane returns text:""). Callers that need non-empty speech should check text themselves.
+   */
   fun transcribe(request: TranscriptionRequest): TranscriptionResponse {
     val key = requireKey()
     val (body, _) =
@@ -466,8 +470,8 @@ class ControlPlaneClient(
     body.error?.let { err ->
       throw PrismError.Server(err.message ?: err.code ?: "transcription error")
     }
-    if (body.text.isNullOrBlank()) throw PrismError.Server("Empty transcription")
-    return body
+    // text may be null/blank for silence; normalize to empty string for callers.
+    return if (body.text == null) body.copy(text = "") else body
   }
 
   fun transcribe(model: String, audio: String): TranscriptionResponse =

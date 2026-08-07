@@ -347,6 +347,9 @@ def run_matrix(args: argparse.Namespace) -> int:
             print(f"using public seed image fallback")
 
     # --- CHAT ---
+    # max_tokens must be high enough for reasoning models (o4-mini / gpt-5.x):
+    # with 16 they often finish_reason=length with empty content after burning budget
+    # on internal thinking. Product clients omit max_tokens (plane uses plan ceiling).
     for m in by_mod.get("chat", []):
         mid = m["id"]
         t0 = time.monotonic()
@@ -357,14 +360,37 @@ def run_matrix(args: argparse.Namespace) -> int:
                 "model": mid,
                 "messages": [{"role": "user", "content": "Reply with exactly: ok"}],
                 "stream": False,
-                "max_tokens": 16,
+                "max_tokens": 256,
             },
             timeout=120,
         )
         text = extract_chat_text(body) if isinstance(body, dict) else ""
-        # HTTP 200 with no structured error = pass even if content is empty/reasoning-only.
         has_err = isinstance(body, dict) and body.get("error") is not None
+        # Real fail: non-200 or structured error. Empty content on 200 is soft (retry once
+        # with higher budget if finish_reason=length).
         ok = st == 200 and not has_err
+        if ok and not text:
+            finish = ""
+            try:
+                finish = ((body.get("choices") or [{}])[0].get("finish_reason") or "")
+            except Exception:
+                pass
+            if finish == "length":
+                st2, body2 = c.request(
+                    "POST",
+                    "/v1/chat/completions",
+                    {
+                        "model": mid,
+                        "messages": [{"role": "user", "content": "Reply with exactly: ok"}],
+                        "stream": False,
+                        "max_tokens": 1024,
+                    },
+                    timeout=180,
+                )
+                st, body = st2, body2
+                text = extract_chat_text(body) if isinstance(body, dict) else ""
+                has_err = isinstance(body, dict) and body.get("error") is not None
+                ok = st == 200 and not has_err
         detail = (text or "(empty content)") if ok else err_msg(body)
         record(
             Result(
@@ -556,35 +582,46 @@ def run_matrix(args: argparse.Namespace) -> int:
     for m in by_mod.get("tts", []):
         mid = m["id"]
         t0 = time.monotonic()
-        st, body = c.request(
-            "POST",
-            "/v1/audio/speech",
-            {"model": mid, "input": "Prism smoke test.", "async": True},
-            timeout=60,
-            prefer_async=True,
-        )
+        # MeloTTS has been flaky on CF (AiError 3043); allow one retry.
+        attempts = 2 if "melotts" in mid else 1
         job_id = None
         ok = False
         detail = ""
-        if isinstance(body, dict) and body.get("id") and not body.get("audio_base64"):
-            job_id = body["id"]
-            st2, job = c.wait_job(job_id, timeout_s=180, poll_s=3)
-            st = st2
-            res = job.get("result") or {}
-            audio = res.get("audio_base64") or res.get("audio")
-            if job.get("status") == "succeeded" and audio:
+        st = 0
+        for attempt in range(attempts):
+            st, body = c.request(
+                "POST",
+                "/v1/audio/speech",
+                {"model": mid, "input": "Prism smoke test.", "async": True},
+                timeout=60,
+                prefer_async=True,
+            )
+            job_id = None
+            ok = False
+            detail = ""
+            if isinstance(body, dict) and body.get("id") and not body.get("audio_base64"):
+                job_id = body["id"]
+                st2, job = c.wait_job(job_id, timeout_s=180, poll_s=3)
+                st = st2
+                res = job.get("result") or {}
+                audio = res.get("audio_base64") or res.get("audio")
+                if job.get("status") == "succeeded" and audio:
+                    ok = True
+                    detail = f"async audio · len={len(str(audio))}"
+                    if tts_audio_b64 is None and not str(audio).startswith("http"):
+                        tts_audio_b64 = str(audio)
+                else:
+                    detail = err_msg(job)
+            elif isinstance(body, dict) and body.get("audio_base64"):
                 ok = True
-                detail = f"async audio · len={len(str(audio))}"
-                if tts_audio_b64 is None and not str(audio).startswith("http"):
-                    tts_audio_b64 = str(audio)
+                detail = f"sync audio · len={len(body['audio_base64'])}"
+                tts_audio_b64 = body["audio_base64"]
             else:
-                detail = err_msg(job)
-        elif isinstance(body, dict) and body.get("audio_base64"):
-            ok = True
-            detail = f"sync audio · len={len(body['audio_base64'])}"
-            tts_audio_b64 = body["audio_base64"]
-        else:
-            detail = err_msg(body)
+                detail = err_msg(body)
+            if ok:
+                break
+            if attempt + 1 < attempts:
+                time.sleep(3)
         record(
             Result(
                 "tts",
@@ -598,35 +635,25 @@ def run_matrix(args: argparse.Namespace) -> int:
         )
 
     # --- STT (file) ---
+    # Plane contract: JSON { model, audio } where audio is raw base64 or data: URL
+    # (NOT multipart). Matches prism-kit ControlPlaneClient.transcribe / iOS.
     wav = tiny_wav_bytes(1.0)
+    audio_data_url = "data:audio/wav;base64," + base64.b64encode(wav).decode("ascii")
     for m in by_mod.get("stt", []):
         mid = m["id"]
         t0 = time.monotonic()
-        # multipart transcription
-        c.rate.wait()
-        try:
-            r = c.s.post(
-                f"{BASE}/v1/audio/transcriptions",
-                headers={
-                    "Authorization": c.s.headers["Authorization"],
-                    "User-Agent": UA,
-                },
-                data={"model": mid},
-                files={"file": ("smoke.wav", wav, "audio/wav")},
-                timeout=120,
-            )
-            st = r.status_code
-            try:
-                body = r.json()
-            except Exception:
-                body = {"raw": r.text[:400]}
-        except requests.RequestException as e:
-            st, body = 0, {"error": {"message": str(e)}}
+        st, body = c.request(
+            "POST",
+            "/v1/audio/transcriptions",
+            {"model": mid, "audio": audio_data_url},
+            timeout=120,
+        )
         text = ""
         if isinstance(body, dict):
             text = body.get("text") or body.get("transcript") or ""
-        # empty transcript on silence is still a successful call if HTTP 200
-        ok = st == 200 and "error" not in body
+        # empty transcript on silence is still a successful call if HTTP 200 + no error
+        has_err = isinstance(body, dict) and body.get("error") is not None
+        ok = st == 200 and not has_err
         detail = f"text={text!r}" if ok else err_msg(body)
         record(
             Result(
