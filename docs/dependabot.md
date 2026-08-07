@@ -20,6 +20,8 @@ Root `build.gradle.kts` forces:
 | `org.bouncycastle:*` | `1.84` | GOST CTR + LDAP + bcpkix |
 | `org.bitbucket.b_c:jose4j` | `0.9.6` | compressed JWE DoS |
 | `org.jdom:jdom2` | `2.0.6.1` | XXE |
+| `org.apache.commons:commons-lang3` | `3.18.0` | Uncontrolled recursion on long inputs (GHSA-j288-q9x7-2f5v) |
+| `org.apache.commons:commons-compress` | `1.26.0` | (forced; Dependabot may offer 1.28.0 separately) |
 
 AGP is also bumped (see root plugins block) so Google's pin moves forward when it can.
 
