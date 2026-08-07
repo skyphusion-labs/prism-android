@@ -64,6 +64,10 @@ class ChatSessionStore(context: Context) {
         }
       Snapshot(sorted, cur)
     } catch (_: Exception) {
+      // An unparseable store must not be silently overwritten by the next save: move it aside
+      // so the bytes survive for recovery, and so a later `file.exists()` reads false rather
+      // than "parsed, and the user has no chats".
+      runCatching { file.renameTo(File(file.path + ".corrupt")) }
       Snapshot(emptyList(), null)
     }
   }
@@ -77,7 +81,30 @@ class ChatSessionStore(context: Context) {
       JSONObject()
         .put("sessions", arr)
         .put("currentId", currentId)
-    file.writeText(root.toString())
+    writeAtomically(root.toString())
+  }
+
+  /**
+   * Write via a temp file and rename, never straight over the live file.
+   *
+   * `File.writeText` TRUNCATES first, so a process death mid-write (this store holds base64
+   * image data inline and is routinely multi-MB) leaves a half-written file. That file does not
+   * announce itself: [load] parses it, fails, and used to return an empty snapshot, which the
+   * UI renders as "you have no chats" and the next save then makes true. A rename within one
+   * directory is atomic, so a reader sees either the whole previous file or the whole new one.
+   */
+  private fun writeAtomically(json: String) {
+    val tmp = File(file.path + ".tmp")
+    try {
+      tmp.writeText(json)
+      if (!tmp.renameTo(file)) {
+        // Same-directory rename should not fail. If it somehow does, a direct write is worse
+        // than a rename and better than dropping the save entirely.
+        file.writeText(json)
+      }
+    } finally {
+      if (tmp.exists()) tmp.delete()
+    }
   }
 
   private fun sessionToJson(s: ChatSession): JSONObject {
