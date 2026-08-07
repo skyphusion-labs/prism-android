@@ -164,7 +164,7 @@ fun SessionListScreen(
               Haptics.light(view)
               val bytes = vm.exportSessionsJson()
               val f =
-                MediaUtils.writeCacheFile(context, "prism-chats-export.json", bytes)
+                MediaUtils.writeShareFile(context, "prism-chats-export", "json", bytes)
               if (f != null) {
                 MediaUtils.shareFile(context, f, "application/json", "Export chats")
               } else {

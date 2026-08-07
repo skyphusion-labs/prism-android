@@ -36,6 +36,7 @@ import org.skyphusion.prism.PrismClient
 import org.skyphusion.prism.PrismError
 import org.skyphusion.prism.SecretStore
 import org.skyphusion.prism.SecretStoreKeys
+import org.skyphusion.prism.Transcript
 import org.skyphusion.prism.VideoClipDuration
 import org.skyphusion.prism.prismUserFacingError
 
@@ -1018,7 +1019,7 @@ class AppViewModel(
     selectedVideoModelId = null
     balance = null
     planeUsageLines.clear()
-    turns.clear()
+    replaceTurns()
     compactState = null
     playgroundConversationId = null
     clearMediaResults()
@@ -1157,7 +1158,7 @@ class AppViewModel(
     val s = ChatSession(selectedModelId = selectedModelId)
     sessions.add(0, s)
     currentSessionId = s.id
-    turns.clear()
+    replaceTurns()
     compactState = null
     saveSessionsToDisk()
   }
@@ -1221,7 +1222,7 @@ class AppViewModel(
     val s = ChatSession(selectedModelId = selectedModelId)
     sessions.add(0, s)
     currentSessionId = s.id
-    turns.clear()
+    replaceTurns()
     compactState = null
     playgroundConversationId = null
     errorMessage = null
@@ -1233,11 +1234,12 @@ class AppViewModel(
   }
 
   fun openSession(id: String, persist: Boolean = true) {
+    // Cancel BEFORE persisting: a stream still appending makes the snapshot a moving target.
+    abandonChatStream()
     if (persist) persistCurrentSession()
     val s = sessions.firstOrNull { it.id == id } ?: return
     currentSessionId = s.id
-    turns.clear()
-    turns.addAll(s.turns)
+    replaceTurns(s.turns)
     compactState = s.compact
     playgroundConversationId = s.conversationId
     if (s.selectedModelId != null && chatModels.any { it.id == s.selectedModelId }) {
@@ -1259,7 +1261,7 @@ class AppViewModel(
         openSession(next.id, persist = false)
       } else {
         currentSessionId = null
-        turns.clear()
+        replaceTurns()
         compactState = null
         ensureCurrentSession()
       }
@@ -1406,7 +1408,7 @@ class AppViewModel(
   }
 
   fun clearChat() {
-    turns.clear()
+    replaceTurns()
     compactState = null
     // playgroundConversationId is server-owned; leave it until bindPlaygroundConversation(null).
     clearChatFailure()
@@ -1604,13 +1606,61 @@ class AppViewModel(
     send()
   }
 
+  /**
+   * Apply [transform] to the turn carrying [id]; do nothing if that turn has left the transcript.
+   *
+   * The streaming path holds a turn IDENTITY, never a list position, and that distinction is the
+   * whole of #37. A position stays *valid* when the conversation is swapped underneath an
+   * in-flight request, so an index write lands silently on somebody else's reply; an id minted
+   * for one turn does not occur in another conversation at all, so the same write has nowhere
+   * wrong to land. Returns whether the turn was still there.
+   */
+  private fun updateTurn(id: String, transform: (ChatTurn) -> ChatTurn): Boolean =
+    Transcript.updateById(turns, id, ChatTurn::id, transform)
+
+  /** The turn carrying [id], or null once it has left the transcript. */
+  private fun turnById(id: String): ChatTurn? = Transcript.findById(turns, id, ChatTurn::id)
+
+  /** Remove the turn carrying [id]. A no-op, not an exception, when it is already gone. */
+  private fun removeTurn(id: String): Boolean = Transcript.removeById(turns, id, ChatTurn::id)
+
+  /**
+   * Cancel an in-flight chat silently, leaving the transcript exactly as it stands.
+   *
+   * [cancelChat] is the user-visible version and marks the abandoned turn; this one is for the
+   * paths that are about to replace or discard the transcript anyway.
+   */
+  private fun abandonChatStream() {
+    val job = chatJob ?: return
+    chatJob = null
+    job.cancel()
+    isBusy = false
+  }
+
+  /**
+   * Replace the live transcript, cancelling any in-flight chat first.
+   *
+   * Every path that swaps or discards the conversation goes through here, so the cancel cannot
+   * be present at one site and forgotten at the other five -- which is how #37 was reachable.
+   * Prefer this over a bare `turns.clear()`. Cancelling is what stops a stream outliving the
+   * turns it was started against; identity-addressed writes ([updateTurn]) are what stop a
+   * stream that outlives them anyway from corrupting whatever replaced them. Both are
+   * load-bearing: the first prevents deltas being dropped into nothing, the second prevents
+   * them being dropped into the wrong chat.
+   */
+  private fun replaceTurns(next: List<ChatTurn> = emptyList()) {
+    abandonChatStream()
+    turns.clear()
+    if (next.isNotEmpty()) turns.addAll(next)
+  }
+
   fun cancelChat() {
     chatJob?.cancel()
     chatJob = null
     isBusy = false
     val last = turns.lastOrNull()
     if (last != null && last.role == ChatTurn.Role.Assistant && last.text.isEmpty()) {
-      turns[turns.lastIndex] = last.copy(text = "(cancelled)")
+      updateTurn(last.id) { it.copy(text = "(cancelled)") }
     }
     errorMessage = "Cancelled"
   }
@@ -1692,7 +1742,8 @@ class AppViewModel(
 
     val assistant = ChatTurn(role = ChatTurn.Role.Assistant, text = "", modelId = modelId)
     turns.add(assistant)
-    val assistantIndex = turns.lastIndex
+    // Deliberately no index is captured here. The request below addresses its reply by
+    // `assistant.id` for the whole of its life; see [updateTurn].
 
     chatJob =
       viewModelScope.launch {
@@ -1700,9 +1751,9 @@ class AppViewModel(
         errorMessage = null
         try {
           when (backend) {
-            BackendKind.ControlPlane -> sendPlane(modelId, model, assistantIndex, assistant)
+            BackendKind.ControlPlane -> sendPlane(modelId, model, assistant)
             BackendKind.Playground ->
-              sendPlayground(modelId, model, text, assistantIndex, assistant, sendImages)
+              sendPlayground(modelId, model, text, assistant, sendImages)
           }
           if (backend == BackendKind.ControlPlane) refreshAccount()
           persistCurrentSession()
@@ -1711,9 +1762,12 @@ class AppViewModel(
           if (backend == BackendKind.ControlPlane) handleAuthError(e)
           errorMessage = e.toUserMessage()
           recordChatFailure(text)
-          if (turns.getOrNull(assistantIndex)?.text.isNullOrEmpty()) {
-            turns.removeAt(assistantIndex)
-          }
+          // `getOrNull(i)?.text.isNullOrEmpty()` read "the turn is GONE" as "the turn is
+          // empty, delete it", then threw a second IndexOutOfBoundsException out of this catch
+          // block with no handler above it. Absent and empty are different states and only the
+          // second one is ours to tidy.
+          val shell = turnById(assistant.id)
+          if (shell != null && shell.text.isEmpty()) removeTurn(assistant.id)
           persistCurrentSession()
         } finally {
           isBusy = false
@@ -1724,10 +1778,9 @@ class AppViewModel(
   private suspend fun sendPlane(
     modelId: String,
     model: ControlPlaneModel?,
-    assistantIndex: Int,
     assistant: ChatTurn,
   ) {
-    val history = buildPlaneChatMessages(excludeAssistantIndex = assistantIndex)
+    val history = buildPlaneChatMessages(excludeTurnId = assistant.id)
     if (useStream && model?.streaming != false) {
       lastRequestCost = "Streamed · cost in balance"
       val req =
@@ -1743,17 +1796,15 @@ class AppViewModel(
             when (ev) {
               is ChatStreamEvent.Delta -> {
                 withContext(Dispatchers.Main) {
-                  val cur = turns[assistantIndex]
-                  turns[assistantIndex] = cur.copy(text = cur.text + ev.text)
+                  updateTurn(assistant.id) { it.copy(text = it.text + ev.text) }
                 }
               }
               is ChatStreamEvent.Done -> {
                 val full = ev.fullText
                 if (full != null) {
                   withContext(Dispatchers.Main) {
-                    val cur = turns[assistantIndex]
-                    if (cur.text.isEmpty()) {
-                      turns[assistantIndex] = cur.copy(text = full)
+                    updateTurn(assistant.id) { cur ->
+                      if (cur.text.isEmpty()) cur.copy(text = full) else cur
                     }
                   }
                 }
@@ -1764,9 +1815,10 @@ class AppViewModel(
           }
       }
       // Stream closed with no text (mobile partial body). Fall back once (iOS #33).
-      val empty =
-        turns.getOrNull(assistantIndex)?.text.isNullOrEmpty()
-      if (empty) {
+      // A turn that has LEFT the transcript is not an empty turn. Re-running the request
+      // non-streamed for a reply with nowhere to go spends the user's balance for nothing.
+      val shell = turnById(assistant.id)
+      if (shell != null && shell.text.isEmpty()) {
         val res =
           withContext(Dispatchers.IO) {
             client.chatCompletions(
@@ -1775,7 +1827,7 @@ class AppViewModel(
           }
         val text = res.response.firstContent.orEmpty()
         if (text.isEmpty()) throw PrismError.Server("Empty stream completion")
-        turns[assistantIndex] = assistant.copy(text = text)
+        updateTurn(assistant.id) { it.copy(text = text) }
         lastRequestCost = res.meters.costDescription()
       }
     } else {
@@ -1786,7 +1838,7 @@ class AppViewModel(
           )
         }
       val reply = res.response.firstContent.orEmpty()
-      turns[assistantIndex] = assistant.copy(text = reply)
+      updateTurn(assistant.id) { it.copy(text = reply) }
       lastRequestCost = res.meters.costDescription()
     }
   }
@@ -1795,7 +1847,6 @@ class AppViewModel(
     modelId: String,
     model: ControlPlaneModel?,
     userText: String,
-    assistantIndex: Int,
     assistant: ChatTurn,
     imageDataUrls: List<String> = emptyList(),
   ) {
@@ -1816,17 +1867,15 @@ class AppViewModel(
             when (ev) {
               is ChatStreamEvent.Delta -> {
                 withContext(Dispatchers.Main) {
-                  val cur = turns[assistantIndex]
-                  turns[assistantIndex] = cur.copy(text = cur.text + ev.text)
+                  updateTurn(assistant.id) { it.copy(text = it.text + ev.text) }
                 }
               }
               is ChatStreamEvent.Done -> {
                 withContext(Dispatchers.Main) {
                   val full = ev.fullText
                   if (full != null) {
-                    val cur = turns[assistantIndex]
-                    if (cur.text.isEmpty()) {
-                      turns[assistantIndex] = cur.copy(text = full)
+                    updateTurn(assistant.id) { cur ->
+                      if (cur.text.isEmpty()) cur.copy(text = full) else cur
                     }
                   }
                   ev.conversationId?.takeIf { it.isNotBlank() }?.let { cid ->
@@ -1839,14 +1888,16 @@ class AppViewModel(
             }
           }
       }
-      if (turns.getOrNull(assistantIndex)?.text.isNullOrEmpty()) {
+      // See the plane path: absent is not empty, and only empty earns a second request.
+      val shell = turnById(assistant.id)
+      if (shell != null && shell.text.isEmpty()) {
         val res =
           withContext(Dispatchers.IO) {
             playground.chat(body)
           }
         val out = res.output.orEmpty()
         if (out.isEmpty()) throw PrismError.Server("Empty stream completion")
-        turns[assistantIndex] = assistant.copy(text = out)
+        updateTurn(assistant.id) { it.copy(text = out) }
         res.conversationId?.takeIf { it.isNotBlank() }?.let {
           playgroundConversationId = it
         }
@@ -1856,7 +1907,7 @@ class AppViewModel(
         withContext(Dispatchers.IO) {
           playground.chat(body)
         }
-      turns[assistantIndex] = assistant.copy(text = res.output.orEmpty())
+      updateTurn(assistant.id) { it.copy(text = res.output.orEmpty()) }
       res.conversationId?.takeIf { it.isNotBlank() }?.let {
         playgroundConversationId = it
       }
@@ -2556,9 +2607,10 @@ class AppViewModel(
 
   /**
    * Build OpenAI-style messages for the plane, applying compact if set.
-   * [excludeAssistantIndex] skips the in-flight empty assistant shell.
+   * [excludeTurnId] skips the in-flight empty assistant shell -- by identity rather than by
+   * position, so it cannot select a different turn if the transcript has moved.
    */
-  private fun buildPlaneChatMessages(excludeAssistantIndex: Int): List<ControlPlaneChatMessage> {
+  private fun buildPlaneChatMessages(excludeTurnId: String): List<ControlPlaneChatMessage> {
     val out = mutableListOf<ControlPlaneChatMessage>()
     val compact = compactState
     if (compact != null) {
@@ -2569,7 +2621,7 @@ class AppViewModel(
     }
     val through = compact?.throughTurnIndex
     for ((idx, turn) in turns.withIndex()) {
-      if (idx == excludeAssistantIndex) continue
+      if (turn.id == excludeTurnId) continue
       if (through != null && idx <= through) continue
       when (turn.role) {
         ChatTurn.Role.User -> {

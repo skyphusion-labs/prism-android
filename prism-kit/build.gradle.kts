@@ -18,6 +18,25 @@ dependencies {
 
 tasks.test {
   useJUnitPlatform()
+  testLogging {
+    events("passed", "skipped", "failed")
+  }
+  // A green run that names no tests cannot tell "everything passed" from "nothing ran", and the
+  // CI log printed neither a test name nor a count. Print the population, and refuse an empty
+  // one: zero executed tests is a harness failure, never a pass.
+  afterSuite(
+    KotlinClosure2<TestDescriptor, TestResult, Unit>({ desc, result ->
+      if (desc.parent == null) {
+        println(
+          "prism-kit tests: ${result.testCount} run, ${result.failedTestCount} failed, " +
+            "${result.skippedTestCount} skipped",
+        )
+        if (result.testCount == 0L) {
+          throw GradleException("No tests executed; an empty run is a harness failure, not a pass.")
+        }
+      }
+    }),
+  )
 }
 
 kotlin {

@@ -10,6 +10,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -42,8 +43,10 @@ class MainActivity : FragmentActivity() {
                   appContext = applicationContext,
                 ),
             )
-          var showSettings by remember { mutableStateOf(false) }
-          var showSessions by remember { mutableStateOf(false) }
+          // Saveable, not remember: the activity declares no `configChanges`, so a rotation
+          // recreates it and a plain `remember` silently returns the user to the chat shell.
+          var showSettings by rememberSaveable { mutableStateOf(false) }
+          var showSessions by rememberSaveable { mutableStateOf(false) }
           val lifecycleOwner = LocalLifecycleOwner.current
 
           DisposableEffect(Unit) {

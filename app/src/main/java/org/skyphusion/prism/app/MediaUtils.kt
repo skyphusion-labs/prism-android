@@ -13,6 +13,7 @@ import android.util.Base64
 import androidx.core.content.FileProvider
 import java.io.File
 import java.io.FileOutputStream
+import java.util.UUID
 
 /** Shared helpers for photo refs, gallery save, and local audio playback. */
 object MediaUtils {
@@ -104,6 +105,32 @@ object MediaUtils {
     }
   }
 
+  /**
+   * Write [bytes] to a cache file whose name cannot be guessed or re-used, for sharing out.
+   *
+   * `file_paths.xml` publishes the whole cache dir through the FileProvider, so a CONSTANT
+   * share filename means a receiving app granted read on one export holds a URI that later
+   * resolves to a different, newer export. A fresh name per share breaks that: the old grant
+   * points at a path that no longer exists.
+   *
+   * Stale shares are swept on the way in rather than deleted on the way out -- the receiving
+   * app reads the URI asynchronously, so deleting immediately after `startActivity` would
+   * break the share it was meant to clean up.
+   */
+  fun writeShareFile(context: Context, prefix: String, ext: String, bytes: ByteArray): File? {
+    pruneShareFiles(context, prefix)
+    return writeCacheFile(context, "$prefix-${UUID.randomUUID()}.$ext", bytes)
+  }
+
+  /** Delete this prefix's earlier share files (best effort; a live grant may hold one open). */
+  private fun pruneShareFiles(context: Context, prefix: String) {
+    runCatching {
+      context.cacheDir.listFiles()
+        ?.filter { it.isFile && it.name.startsWith("$prefix-") }
+        ?.forEach { it.delete() }
+    }
+  }
+
   fun writeCacheFile(context: Context, name: String, bytes: ByteArray): File? {
     return try {
       val f = File(context.cacheDir, name)
@@ -147,7 +174,7 @@ object MediaUtils {
     format: String = "mp3",
   ): Boolean {
     val bytes = decodeBase64Payload(base64) ?: return false
-    val f = writeCacheFile(context, "prism-share.$format", bytes) ?: return false
+    val f = writeShareFile(context, "prism-share", format, bytes) ?: return false
     val mime =
       when (format.lowercase()) {
         "wav" -> "audio/wav"
