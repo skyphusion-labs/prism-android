@@ -1,83 +1,309 @@
 # prism-android
 
-**License:** [AGPL-3.0-only](LICENSE)  
+**License:** AGPL-3.0-only  
+**App name:** Prism for Android  
 **Version:** 1.0.0  
-**Privacy:** https://skyphusion.org/privacy.html  
-**Source:** https://github.com/skyphusion-labs/prism-android  
-**Metered API:** [prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane)  
-**Playground Worker:** [prism](https://github.com/skyphusion-labs/prism)  
+**API (playground):** [prism](https://github.com/skyphusion-labs/prism)  
+**Control plane:** [prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane)  
 **Sibling:** [prism-ios](https://github.com/skyphusion-labs/prism-ios)
 
 ## What this is
 
-AGPL **Android client** for Prism. Primary path is the commercial control plane at
-`play-proxy.skyphusion.org` (device key `pcp_…` in EncryptedSharedPreferences). Optional
-developer mode talks to the playground Worker for chat history; media doors stay plane-only.
+AGPL **Android client** for Prism:
 
-## Documentation
+1. **`prism-kit`** (JVM library) -- HTTP clients for the playground Worker and commercial control plane.
+2. **`Prism for Android` app** (Compose Material3) -- enroll / model pick / chat / image / video / audio / music / credit top-up.
 
-| Doc | Contents |
-|-----|----------|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How Android fits the plane (Mermaid flowcharts) |
-| [docs/MODELS.md](docs/MODELS.md) | Full live catalog snapshot (chat / image / video / …) |
-| [docs/PLAY-INTERNAL.md](docs/PLAY-INTERNAL.md) | Play Console Internal testing beta |
-| [docs/RELEASE-1.0.md](docs/RELEASE-1.0.md) | 1.0.0 cut notes, AAB, smoke |
+Default production backend: **control plane** at `https://play-proxy.skyphusion.org` (Bearer `pcp_…`).  
+Optional playground: `https://play.skyphusion.org` (session cookie; developer mode).
+
+## How the pieces fit together
+
+```mermaid
+flowchart TB
+  subgraph device["Device: Prism for Android"]
+    UI["Compose tabs<br/>Chat · Image · Video · More"]
+    Kit["prism-kit<br/>ControlPlaneClient / PrismClient"]
+    Bill["Play Billing<br/>credit packs"]
+    Sec["EncryptedSharedPreferences<br/>pcp_ device key"]
+    UI --> Kit
+    UI --> Bill
+    Kit --> Sec
+  end
+
+  subgraph plane["prism-control-plane<br/>play-proxy.skyphusion.org"]
+    Auth["Identity + plan + rate limit"]
+    Meter["Prepaid balance + ledger"]
+    Proxy["Metered doors<br/>chat / image / video / TTS / STT / music"]
+    Jobs["PlaneLongRunWorkflow<br/>video · music · speech · gpt-image-2"]
+    Media["MEDIA R2<br/>signed download URLs"]
+    Auth --> Meter --> Proxy
+    Proxy --> Jobs
+    Jobs --> Media
+  end
+
+  subgraph cf["Cloudflare AI"]
+    GW["AI Gateway prism-proxy"]
+    WAI["Workers AI @cf/*"]
+    UB["Unified Billing<br/>openai / anthropic / xai / google / …"]
+    GW --> WAI
+    GW --> UB
+  end
+
+  subgraph play["Google Play"]
+    IAP["Consumable IAP<br/>credit.5 / .20 / .50"]
+  end
+
+  Kit -->|"Bearer pcp_<br/>HTTPS"| Auth
+  Proxy --> GW
+  Bill -->|"purchase token"| IAP
+  Kit -->|"POST /v1/store/redeem<br/>platform=google_play"| Meter
+  Kit -->|"GET /v1/jobs/:id"| Jobs
+  Kit -->|"GET /v1/media/…"| Media
+```
+
+### Request path (metered inference)
+
+```mermaid
+sequenceDiagram
+  participant App as Prism for Android
+  participant Plane as control plane
+  participant GW as AI Gateway
+  participant Model as Provider / Workers AI
+
+  App->>Plane: POST /v1/chat/completions (or image/video/…)
+  Note over Plane: identity, entitlement,<br/>rate limit, balance gate
+  Plane->>GW: env.AI.run / REST (no prompt in D1)
+  GW->>Model: inference
+  Model-->>GW: result
+  GW-->>Plane: body + log id
+  Plane->>Plane: meter micro-USD, ledger row
+  Plane-->>App: OpenAI-shaped JSON / job 202
+  opt long-run (video/music/speech/gpt-image-2)
+    App->>Plane: GET /v1/jobs/:id
+    Plane-->>App: succeeded + media URL
+  end
+```
+
+### Credit top-up
+
+```mermaid
+flowchart LR
+  A["Settings · Top up"] --> B["Play Billing purchase"]
+  B --> C["purchase token + product id"]
+  C --> D["POST /v1/store/redeem"]
+  D --> E["credit_grants + balance"]
+  E --> F["GET /v1/me refresh"]
+```
 
 ## Layout
 
-| Module | Role |
-|--------|------|
-| `prism-kit` | JVM: `ControlPlaneClient`, `PrismClient`, `VideoClipDuration`, `StoreProducts` |
-| `app` | Compose Material3: enroll, Chat / Image / Video / More, billing, biometric |
+```
+prism-kit/            -- JVM package (API client)
+  src/main/kotlin/    -- ControlPlaneClient, PrismClient, Models, VideoClipDuration
+  src/test/kotlin/    -- kit unit tests
+app/                  -- Compose application
+  src/main/java/      -- AppViewModel, UI screens, BillingManager
+docs/                 -- architecture, models, Play Internal, 1.0 release
+scripts/              -- full-model-matrix-smoke.py, re-smoke-failures.py
+```
 
-## Status (1.0.0)
+## Run the app (macOS + Android SDK)
 
-Parity with **Prism for iOS 1.0.0**:
+```bash
+export JAVA_HOME="$(brew --prefix openjdk@17)/libexec/openjdk.jdk/Contents/Home"
+./gradlew :app:assembleDebug
+# Emulator or device:
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
 
-- Async plane jobs (video, music, speech, gpt-image-2) + forceSync on resume
-- Video clip length picker (per-model CF limits)
-- Use in chat / Animate handoffs; inline text-file attach (not RAG)
-- Play Billing credit packs; Usage dual-pool; live + file STT; TTS/music Play/Stop
-- Full catalog matrix smoke: image/video green; MeloTTS CF flaky (prefer Aura-2)
+Open in **Android Studio** for the device manager and Compose previews.  
+Release AAB (Play): `./gradlew :app:bundleRelease` with `keystore.properties` (gitignored).
 
-## App flow
+## Google Play
 
-1. Import a `pcp_` device key (or Advanced enroll with a one-time token).
-2. Tabs: **Chat · Image · Video · More** (Audio, Music, Usage, Settings).
-3. Top up in Settings (Play Internal track for real IAP).
-4. Optional: biometric lock; home-screen balance widget.
+| Item | Value |
+| --- | --- |
+| Play name | Prism |
+| Application id | `org.skyphusion.prism` |
+| Credit packs | `org.skyphusion.prism.credit.{5,20,50}` |
 
-## Commands
+Internal testing: [docs/PLAY-INTERNAL.md](docs/PLAY-INTERNAL.md).  
+Architecture (detail): [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Package tests
 
 ```bash
 export JAVA_HOME="$(brew --prefix openjdk@17)/libexec/openjdk.jdk/Contents/Home"
 ./gradlew :prism-kit:test
-./gradlew :app:assembleDebug
-./gradlew :app:bundleRelease   # needs keystore.properties (gitignored)
+```
 
-# Full live model matrix (needs pcp_ key file)
+Full live catalog matrix (needs a `pcp_` key file):
+
+```bash
 python3 scripts/full-model-matrix-smoke.py
 ```
 
-## Kit usage
+## Model catalog (control plane)
 
-```kotlin
-val client = ControlPlaneClient()
-client.setClientKey("pcp_…") // or enroll(...)
+Same catalog as the commercial plane (**93** models). Entitlement-filtered at `GET /v1/models`.  
+Source: [`prism-control-plane/src/catalog.ts`](https://github.com/skyphusion-labs/prism-control-plane/blob/main/src/catalog.ts).  
+Priced snapshot with tiers: [docs/MODELS.md](docs/MODELS.md).
 
-val models = client.listModels().data.filter { it.spendable != false }
-val reply = client.chat(model = models.first { it.modality == "chat" }.id, user = "Hello")
-val img = client.generateImage(model = "xai/grok-imagine-image", prompt = "a red cube")
-val vid = client.generateVideo(
-  model = "google/veo-3.1-fast",
-  prompt = "ocean waves",
-  durationSeconds = 8,
-)
-```
+| Modality | Count |
+| --- | ---: |
+| Chat | 44 |
+| Image | 21 |
+| Video | 19 |
+| Text-to-speech (TTS) | 3 |
+| Speech-to-text (STT) | 4 |
+| Music | 1 |
+| Live voice / STT stream | 1 |
+| **Total** | **93** |
+
+### Chat (44)
+
+| Model id | Name |
+| --- | --- |
+| `anthropic/claude-fable-5` | Claude Fable 5 (Anthropic) |
+| `anthropic/claude-sonnet-5` | Claude Sonnet 5 (Anthropic) |
+| `anthropic/claude-opus-5` | Claude Opus 5 (Anthropic) |
+| `anthropic/claude-opus-4-8` | Claude Opus 4.8 (Anthropic) |
+| `anthropic/claude-opus-4-7` | Claude Opus 4.7 (Anthropic) |
+| `anthropic/claude-opus-4-6` | Claude Opus 4.6 (Anthropic) |
+| `anthropic/claude-sonnet-4-6` | Claude Sonnet 4.6 (Anthropic) |
+| `anthropic/claude-haiku-4-5` | Claude Haiku 4.5 (Anthropic) |
+| `xai/grok-4.5` | Grok 4.5 (xAI) |
+| `xai/grok-4.3` | Grok 4.3 (xAI) |
+| `xai/grok-4.20-multi-agent-0309` | Grok 4.20 Multi-Agent (xAI) |
+| `xai/grok-4.20-0309-reasoning` | Grok 4.20 Reasoning (xAI) |
+| `moonshotai/kimi-k3` | Kimi K3 (Moonshot, 1M ctx) |
+| `@cf/moonshotai/kimi-k2.6` | Kimi K2.6 (1T) |
+| `@cf/moonshotai/kimi-k2.7-code` | Kimi K2.7 Code (1T, vision) |
+| `@cf/openai/gpt-oss-120b` | GPT-OSS 120B (reasoning) |
+| `@cf/meta/llama-4-scout-17b-16e-instruct` | Llama 4 Scout (MoE, vision) |
+| `@cf/google/gemma-4-26b-a4b-it` | Gemma 4 26B (vision) |
+| `@cf/openai/gpt-oss-20b` | GPT-OSS 20B |
+| `openai/gpt-5.5` | GPT-5.5 (OpenAI) |
+| `openai/gpt-5.5-pro` | GPT-5.5 Pro (OpenAI, Responses) |
+| `openai/gpt-5.6-sol` | GPT-5.6 Sol (OpenAI, Responses) |
+| `openai/gpt-5.6-terra` | GPT-5.6 Terra (OpenAI, Responses) |
+| `openai/gpt-5.6-luna` | GPT-5.6 Luna (OpenAI, Responses) |
+| `openai/gpt-5.4` | GPT-5.4 (OpenAI) |
+| `openai/gpt-5.4-mini` | GPT-5.4 mini (OpenAI) |
+| `openai/o4-mini` | o4-mini (OpenAI, reasoning) |
+| `@cf/meta/llama-3.3-70b-instruct-fp8-fast` | Llama 3.3 70B (fp8) |
+| `@cf/meta/llama-3.2-11b-vision-instruct` | Llama 3.2 11B (vision) |
+| `@cf/meta/llama-3.2-3b-instruct` | Llama 3.2 3B |
+| `@cf/qwen/qwen3-30b-a3b-fp8` | Qwen3 30B MoE |
+| `@cf/qwen/qwq-32b` | QwQ 32B (reasoning) |
+| `@cf/qwen/qwen2.5-coder-32b-instruct` | Qwen2.5 Coder 32B |
+| `@cf/deepseek-ai/deepseek-r1-distill-qwen-32b` | DeepSeek R1 32B |
+| `@cf/mistralai/mistral-small-3.1-24b-instruct` | Mistral Small 3.1 (vision) |
+| `@cf/zai-org/glm-4.7-flash` | GLM-4.7 Flash (Z.AI, 100+ lang) |
+| `@cf/zai-org/glm-5.2` | GLM-5.2 (Z.AI, agentic coding) |
+| `@cf/nvidia/nemotron-3-120b-a12b` | Nemotron 3 120B (NVIDIA, agentic) |
+| `@cf/aisingapore/gemma-sea-lion-v4-27b-it` | SEA-LION v4 27B (SE Asian langs) |
+| `google/gemini-3.1-pro` | Gemini 3.1 Pro (Google) |
+| `google/gemini-3.5-flash` | Gemini 3.5 Flash (Google) |
+| `google/gemini-3.6-flash` | Gemini 3.6 Flash (Google) |
+| `@cf/ibm-granite/granite-4.0-h-micro` | Granite 4.0 Micro (IBM) |
+| `@cf/meta/llama-3.2-1b-instruct` | Llama 3.2 1B (tiny, cheap) |
+
+### Image (21)
+
+| Model id | Name |
+| --- | --- |
+| `google/nano-banana-pro` | Nano Banana Pro (Google) |
+| `google/nano-banana-2` | Nano Banana 2 (Google) |
+| `google/nano-banana-2-lite` | Nano Banana 2 Lite (Google) |
+| `google/imagen-4` | Imagen 4 (Google) |
+| `openai/gpt-image-1.5` | GPT Image 1.5 (OpenAI) |
+| `openai/gpt-image-2` | GPT Image 2 (OpenAI) |
+| `recraft/recraftv4` | Recraft V4 (art-directed, opaque) |
+| `recraft/recraftv4-1` | Recraft V4.1 (art-directed, opaque) |
+| `recraft/recraftv4-1-pro` | Recraft V4.1 Pro (art-directed, opaque) |
+| `xai/grok-imagine-image` | Grok Imagine Image (xAI) |
+| `xai/grok-imagine-image-quality` | Grok Imagine Image Quality (xAI) |
+| `bytedance/seedream-5-pro` | Seedream 5 Pro (ByteDance) |
+| `bytedance/seedream-5-lite` | Seedream 5 Lite (ByteDance) |
+| `@cf/black-forest-labs/flux-2-klein-9b` | FLUX 2 Klein 9B (frontier) |
+| `@cf/black-forest-labs/flux-2-klein-4b` | FLUX 2 Klein 4B (faster) |
+| `@cf/black-forest-labs/flux-2-dev` | FLUX 2 Dev (multi-reference) |
+| `@cf/black-forest-labs/flux-1-schnell` | FLUX-1 schnell (fast) |
+| `@cf/leonardo/lucid-origin` | Lucid Origin (Leonardo) |
+| `@cf/leonardo/phoenix-1.0` | Phoenix 1.0 (Leonardo) |
+| `@cf/lykon/dreamshaper-8-lcm` | Dreamshaper 8 LCM (fast SD) |
+| `@cf/stabilityai/stable-diffusion-xl-base-1.0` | Stable Diffusion XL (SDXL) |
+
+### Video (19)
+
+| Model id | Name |
+| --- | --- |
+| `google/veo-3.1` | Veo 3.1 (Google) |
+| `google/veo-3.1-fast` | Veo 3.1 Fast (Google) |
+| `bytedance/seedance-2.0` | Seedance 2.0 (ByteDance) |
+| `bytedance/seedance-2.0-fast` | Seedance 2.0 Fast (ByteDance) |
+| `bytedance/seedance-2.0-mini` | Seedance 2.0 Mini (ByteDance) |
+| `minimax/hailuo-2.3` | Hailuo 2.3 (MiniMax) |
+| `minimax/hailuo-2.3-fast` | Hailuo 2.3 Fast (MiniMax) |
+| `xai/grok-imagine-video` | Grok Imagine Video (xAI) |
+| `xai/grok-imagine-video-1.5-preview` | Grok Imagine Video 1.5 (xAI, preview) |
+| `runwayml/gen-4.5` | Gen-4.5 (RunwayML) |
+| `alibaba/hh1-t2v` | HappyHorse 1.0 T2V (Alibaba) |
+| `alibaba/hh1-i2v` | HappyHorse 1.0 I2V (Alibaba, image-to-video) |
+| `alibaba/hh1.1-t2v` | HappyHorse 1.1 T2V (Alibaba) |
+| `alibaba/hh1.1-i2v` | HappyHorse 1.1 I2V (Alibaba, image-to-video) |
+| `alibaba/wan-2.7-i2v` | Wan 2.7 I2V (Alibaba, image-to-video) |
+| `pixverse/v6` | PixVerse v6 |
+| `pixverse/v5.6` | PixVerse v5.6 |
+| `vidu/q3-pro` | Vidu Q3 Pro |
+| `vidu/q3-turbo` | Vidu Q3 Turbo |
+
+### Text-to-speech (3)
+
+| Model id | Name |
+| --- | --- |
+| `@cf/deepgram/aura-2-en` | Aura-2 English (Deepgram) |
+| `@cf/deepgram/aura-2-es` | Aura-2 Spanish (Deepgram) |
+| `@cf/myshell-ai/melotts` | MeloTTS (multilingual) |
+
+### Speech-to-text (4)
+
+| Model id | Name |
+| --- | --- |
+| `@cf/openai/whisper-large-v3-turbo` | Whisper Large v3 Turbo (best) |
+| `@cf/openai/whisper` | Whisper (general purpose) |
+| `@cf/openai/whisper-tiny-en` | Whisper Tiny EN (fast, beta) |
+| `@cf/deepgram/nova-3` | Deepgram Nova-3 (accurate) |
+
+### Music (1)
+
+| Model id | Name |
+| --- | --- |
+| `minimax/music-2.6` | MiniMax Music 2.6 |
+
+### Live voice / STT stream (1)
+
+| Model id | Name |
+| --- | --- |
+| `@cf/deepgram/flux` | Deepgram Flux (live mic) |
+
+**Not on native Android (playground-only):** RAG multi-doc, projects, Discord import, web search, conversation compact against playground history. Plane never stores prompts; chat history is local on device.
+
+## Status (1.0.0)
+
+- Async Workflow jobs: video, music, speech, gpt-image-2
+- Video clip length picker (per-model CF limits)
+- Use in chat / Animate handoffs; inline text-file attach (not RAG)
+- Play Billing top-up via plane redeem (plane **1.0.0** / **0.4.36+**)
+- Release notes: [docs/RELEASE-1.0.md](docs/RELEASE-1.0.md)
+- Play Internal: [docs/PLAY-INTERNAL.md](docs/PLAY-INTERNAL.md)
+- Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ## Related
 
-- Live proxy: https://play-proxy.skyphusion.org  
 - Playground: https://play.skyphusion.org  
-- Plane contract: [docs/CONTRACT.md](https://github.com/skyphusion-labs/prism-control-plane/blob/main/docs/CONTRACT.md)  
-- Support: support@skyphusion.org  
+- Control plane: https://play-proxy.skyphusion.org  
+- Contract: [CONTRACT.md](https://github.com/skyphusion-labs/prism-control-plane/blob/main/docs/CONTRACT.md)  
+- iOS: https://github.com/skyphusion-labs/prism-ios  
