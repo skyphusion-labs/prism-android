@@ -39,10 +39,10 @@ buildscript {
         "org.bouncycastle:bcutil-jdk18on:1.84",
         "org.bitbucket.b_c:jose4j:0.9.6",
         "org.jdom:jdom2:2.0.6.1",
-        "com.google.protobuf:protobuf-java:3.25.5",
-        "com.google.protobuf:protobuf-kotlin:3.25.5",
-        "com.google.protobuf:protobuf-java-util:3.25.5",
-        "org.apache.commons:commons-compress:1.26.0",
+        "com.google.protobuf:protobuf-java:4.35.1",
+        "com.google.protobuf:protobuf-kotlin:4.35.1",
+        "com.google.protobuf:protobuf-java-util:4.35.1",
+        "org.apache.commons:commons-compress:1.28.0",
         "org.apache.commons:commons-lang3:3.18.0",
 
       )
@@ -75,10 +75,10 @@ allprojects {
           "org.bouncycastle:bcutil-jdk18on:1.84",
           "org.bitbucket.b_c:jose4j:0.9.6",
           "org.jdom:jdom2:2.0.6.1",
-        "com.google.protobuf:protobuf-java:3.25.5",
-        "com.google.protobuf:protobuf-kotlin:3.25.5",
-        "com.google.protobuf:protobuf-java-util:3.25.5",
-        "org.apache.commons:commons-compress:1.26.0",
+        "com.google.protobuf:protobuf-java:4.35.1",
+        "com.google.protobuf:protobuf-kotlin:4.35.1",
+        "com.google.protobuf:protobuf-java-util:4.35.1",
+        "org.apache.commons:commons-compress:1.28.0",
         "org.apache.commons:commons-lang3:3.18.0",
 
         )
@@ -104,10 +104,10 @@ allprojects {
         "org.bouncycastle:bcutil-jdk18on:1.84",
         "org.bitbucket.b_c:jose4j:0.9.6",
         "org.jdom:jdom2:2.0.6.1",
-        "com.google.protobuf:protobuf-java:3.25.5",
-        "com.google.protobuf:protobuf-kotlin:3.25.5",
-        "com.google.protobuf:protobuf-java-util:3.25.5",
-        "org.apache.commons:commons-compress:1.26.0",
+        "com.google.protobuf:protobuf-java:4.35.1",
+        "com.google.protobuf:protobuf-kotlin:4.35.1",
+        "com.google.protobuf:protobuf-java-util:4.35.1",
+        "org.apache.commons:commons-compress:1.28.0",
         "org.apache.commons:commons-lang3:3.18.0",
 
       )
