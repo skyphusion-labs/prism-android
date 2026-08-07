@@ -42,7 +42,7 @@ buildscript {
         "com.google.protobuf:protobuf-java:3.25.5",
         "com.google.protobuf:protobuf-kotlin:3.25.5",
         "com.google.protobuf:protobuf-java-util:3.25.5",
-        "org.apache.commons:commons-compress:1.26.0",
+        "org.apache.commons:commons-compress:1.28.0",
 
       )
     }
@@ -77,7 +77,7 @@ allprojects {
         "com.google.protobuf:protobuf-java:3.25.5",
         "com.google.protobuf:protobuf-kotlin:3.25.5",
         "com.google.protobuf:protobuf-java-util:3.25.5",
-        "org.apache.commons:commons-compress:1.26.0",
+        "org.apache.commons:commons-compress:1.28.0",
 
         )
       }
@@ -105,7 +105,7 @@ allprojects {
         "com.google.protobuf:protobuf-java:3.25.5",
         "com.google.protobuf:protobuf-kotlin:3.25.5",
         "com.google.protobuf:protobuf-java-util:3.25.5",
-        "org.apache.commons:commons-compress:1.26.0",
+        "org.apache.commons:commons-compress:1.28.0",
 
       )
     }
