@@ -731,6 +731,11 @@ data class VideoGenerationRequest(
   val image: String? = null,
   /** plane 0.4.29+: 202 + job id instead of holding the connection. */
   val async: Boolean? = null,
+  /**
+   * Clip length for CF. **Type is model-specific:** integer seconds for most models,
+   * string like `"8s"` for Google Veo. Use [VideoClipDuration.forModel] when omitting.
+   */
+  val duration: JsonElement? = null,
 )
 
 @Serializable

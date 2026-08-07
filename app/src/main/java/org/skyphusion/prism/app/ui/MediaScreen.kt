@@ -269,8 +269,17 @@ fun MediaScreen(
         if (kind == MediaKind.Image) {
           "Unit-priced image door. Prefer xAI / Flux when available. i2i models need a reference."
         } else {
-          "Unit-priced video door. Prefer Seedance Fast / Veo. Hailuo is image-to-video only. " +
-            "Long runs use plane async jobs (lock-safe after job id). Grok needs plane 0.4.14+."
+          run {
+            val mid = vm.selectedVideoModelId
+            val clip =
+              mid?.let { org.skyphusion.prism.VideoClipDuration.labelForModel(it) } ?: "5s"
+            val hint =
+              mid?.let { org.skyphusion.prism.VideoClipDuration.rangeHint(it) }.orEmpty()
+            "Unit-priced video · clip $clip" +
+              (if (hint.isNotEmpty()) " ($hint)" else "") +
+              ". Prefer Seedance Fast / Veo. Hailuo is i2v-only. " +
+              "Long runs use plane async jobs (lock-safe after job id)."
+          }
         },
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,

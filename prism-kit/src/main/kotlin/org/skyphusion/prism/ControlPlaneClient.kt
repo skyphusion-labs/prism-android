@@ -263,11 +263,18 @@ class ControlPlaneClient(
     val async = request.async == true
     val client = if (async) enqueueHttp else mediaHttp
     val headers = if (async) mapOf("Prefer" to "respond-async") else emptyMap()
+    // Always send model-correct duration (int vs "8s") so plane/CF get a valid clip length.
+    val payload =
+      if (request.duration != null) {
+        request
+      } else {
+        request.copy(duration = VideoClipDuration.forModel(request.model))
+      }
     val (body, _) =
       client.send<VideoGenerationRequest, VideoGenerationResponse>(
         "POST",
         "/v1/videos/generations",
-        body = request,
+        body = payload,
         bearer = key,
         headers = headers,
         okStatuses = (200..299).toSet(),
@@ -288,9 +295,16 @@ class ControlPlaneClient(
     prompt: String? = null,
     image: String? = null,
     async: Boolean = true,
+    duration: kotlinx.serialization.json.JsonElement? = null,
   ): VideoGenerationResponse =
     generateVideo(
-      VideoGenerationRequest(model = model, prompt = prompt, image = image, async = async),
+      VideoGenerationRequest(
+        model = model,
+        prompt = prompt,
+        image = image,
+        async = async,
+        duration = duration ?: VideoClipDuration.forModel(model),
+      ),
     )
 
   /** `GET /v1/jobs/:id` -- poll async video/music/speech job (plane 0.4.29+). */
