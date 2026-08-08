@@ -27,6 +27,12 @@ jobs:
         include:
           - language: actions
             build-mode: none
+          # fc#1652: scripts/full-model-matrix-smoke.py and scripts/re-smoke-failures.py
+          # (33KB by the linguist census) were unanalysed, and nothing was red about it.
+          # Python is a no-build extractor, so this is a matrix row and nothing else;
+          # the java-kotlin-gated setup steps below skip it by construction.
+          - language: python
+            build-mode: none
           - language: java-kotlin
             build-mode: manual
     steps:
