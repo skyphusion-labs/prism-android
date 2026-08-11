@@ -23,7 +23,7 @@ jobs:
           distribution: temurin
           java-version: "17"
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v5
+        uses: gradle/actions/setup-gradle@v6
       - run: ./gradlew :prism-kit:test --no-daemon
 
   app:
@@ -36,9 +36,9 @@ jobs:
           distribution: temurin
           java-version: "17"
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v5
+        uses: gradle/actions/setup-gradle@v6
       - name: Accept licenses
         run: yes | sdkmanager --licenses >/dev/null || true
       - run: ./gradlew :app:assembleDebug --no-daemon
