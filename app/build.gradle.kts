@@ -16,7 +16,7 @@ if (keystorePropertiesFile.exists()) {
 
 android {
   namespace = "org.skyphusion.prism.app"
-  compileSdk = 35
+  compileSdk = 36
 
   defaultConfig {
     applicationId = "org.skyphusion.prism"
@@ -83,13 +83,13 @@ dependencies {
   implementation("androidx.compose.ui:ui-tooling-preview")
   implementation("androidx.compose.material3:material3")
   implementation("androidx.compose.material:material-icons-extended")
-  implementation("androidx.activity:activity-compose:1.10.1")
+  implementation("androidx.activity:activity-compose:1.13.0")
   implementation("androidx.fragment:fragment-ktx:1.8.8")
   implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.2")
   implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.2")
   implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.2")
-  implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
-  implementation("androidx.security:security-crypto:1.0.0")
+  implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
+  implementation("androidx.security:security-crypto:1.1.0")
   implementation("io.coil-kt:coil-compose:2.7.0")
   implementation("com.android.billingclient:billing-ktx:7.1.1")
   implementation("androidx.biometric:biometric:1.1.0")
