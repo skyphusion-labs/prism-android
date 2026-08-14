@@ -91,7 +91,7 @@ dependencies {
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
   implementation("androidx.security:security-crypto:1.0.0")
   implementation("io.coil-kt:coil-compose:2.7.0")
-  implementation("com.android.billingclient:billing-ktx:7.1.1")
+  implementation("com.android.billingclient:billing-ktx:9.1.0")
   implementation("androidx.biometric:biometric:1.1.0")
 
   debugImplementation("androidx.compose.ui:ui-tooling")
