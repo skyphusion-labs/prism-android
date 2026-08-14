@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Pre-31 Auto Backup companion to data_extraction_rules. allowBackup is
+     already false; this keeps chat-sessions.json out if that flag is flipped. -->
+<full-backup-content>
+  <exclude domain="file" path="chat-sessions.json" />
+</full-backup-content>
