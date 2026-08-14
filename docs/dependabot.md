@@ -32,7 +32,9 @@ AGP is also bumped (see root plugins block) so Google's pin moves forward when i
 | Coordinate | Until |
 |---|---|
 | `gradle` (wrapper) | AGP 9. AGP 8.13.2 uses `InternalProblems`, removed in Gradle 9.6. |
+| `com.android.application` | Dedicated AGP 9 migration. Closed #53 (8.13.2 -> 9.3.1). |
 | `com.android.billingclient:billing-ktx` | A dedicated Billing 8/9 migration. 9.x returns `QueryProductDetailsResult` instead of `List<ProductDetails>`. |
+| `org.bouncycastle:bc{prov,pkix,util}-jdk18on` `1.85.2` | Not published. Latest is `1.85`. Closed #52. |
 
 okhttp 5 is *not* ignored. It needs compileSdk 36 (same as `activity-compose` 1.13) and is a separate major PR.
 

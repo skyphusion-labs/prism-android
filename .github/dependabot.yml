@@ -24,11 +24,21 @@ updates:
     # Closed red majors 2026-08-14:
     # - gradle 9.7 needs AGP 9 (8.13.2 uses InternalProblems, removed in 9.6)
     # - billing-ktx 9 changes queryProductDetailsAsync to QueryProductDetailsResult
+    # - AGP 9.3.1 (#53) is the dedicated AGP 9 migration, not a weekly bump
+    # - bouncycastle 1.85.2 is not published (latest jdk18on is 1.85); #50 then #52
     ignore:
       - dependency-name: "gradle"
         update-types: ["version-update:semver-major"]
       - dependency-name: "com.android.billingclient:billing-ktx"
         update-types: ["version-update:semver-major"]
+      - dependency-name: "com.android.application"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "org.bouncycastle:bcprov-jdk18on"
+        versions: ["1.85.2"]
+      - dependency-name: "org.bouncycastle:bcpkix-jdk18on"
+        versions: ["1.85.2"]
+      - dependency-name: "org.bouncycastle:bcutil-jdk18on"
+        versions: ["1.85.2"]
     groups:
       gradle-minor-patch:
         patterns: ["*"]
