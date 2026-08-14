@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- API 31+ cloud backup + D2D. Chat history is plaintext in filesDir;
+     exclude it so a device-to-device transfer does not copy it (#38). -->
+<data-extraction-rules>
+  <cloud-backup>
+    <exclude domain="file" path="chat-sessions.json" />
+  </cloud-backup>
+  <device-transfer>
+    <exclude domain="file" path="chat-sessions.json" />
+  </device-transfer>
+</data-extraction-rules>

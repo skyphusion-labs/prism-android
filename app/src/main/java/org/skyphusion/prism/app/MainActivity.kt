@@ -3,6 +3,7 @@ package org.skyphusion.prism.app
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
@@ -51,6 +52,11 @@ class MainActivity : FragmentActivity() {
 
           DisposableEffect(Unit) {
             consumeDebugImport(intent, vm)
+            onDispose { }
+          }
+
+          DisposableEffect(vm.biometricLockEnabled) {
+            applySecureFlag(vm.biometricLockEnabled)
             onDispose { }
           }
 
@@ -111,10 +117,24 @@ class MainActivity : FragmentActivity() {
     setIntent(intent)
   }
 
+  private fun applySecureFlag(enabled: Boolean) {
+    if (enabled) {
+      window.setFlags(
+        WindowManager.LayoutParams.FLAG_SECURE,
+        WindowManager.LayoutParams.FLAG_SECURE,
+      )
+    } else {
+      window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    }
+  }
+
   private fun consumeDebugImport(intent: Intent?, vm: AppViewModel) {
     if (intent == null) return
+    // Dual gate (#38 F6): Play builds are not FLAG_DEBUGGABLE; a second
+    // independent BuildConfig.DEBUG check means failing open needs two
+    // regressions. buildConfig is generated (app/build.gradle.kts).
     val debuggable = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
-    if (!debuggable) return
+    if (!debuggable || !BuildConfig.DEBUG) return
     val key = intent.getStringExtra(EXTRA_PCP_KEY) ?: return
     intent.removeExtra(EXTRA_PCP_KEY)
     if (key.isNotBlank()) vm.importDeviceKey(key)
