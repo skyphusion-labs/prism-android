@@ -21,6 +21,14 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: deps
+    # Closed red majors 2026-08-14:
+    # - gradle 9.7 needs AGP 9 (8.13.2 uses InternalProblems, removed in 9.6)
+    # - billing-ktx 9 changes queryProductDetailsAsync to QueryProductDetailsResult
+    ignore:
+      - dependency-name: "gradle"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "com.android.billingclient:billing-ktx"
+        update-types: ["version-update:semver-major"]
     groups:
       gradle-minor-patch:
         patterns: ["*"]
