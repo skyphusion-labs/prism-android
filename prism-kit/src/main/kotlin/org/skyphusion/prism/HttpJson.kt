@@ -72,7 +72,7 @@ class HttpJson(
         throw PrismError.Transport("Transport failed: ${e.message}", e)
       }
     if (res.code !in okStatuses) {
-      val raw = res.body?.string().orEmpty()
+      val raw = res.body.string()
       res.close()
       throw mapHttpError(res.code, raw)
     }
@@ -95,7 +95,7 @@ class HttpJson(
         prismJsonEncode.encodeToString(body)
       }
     val res = execute(method, path, bodyJson, bearer, headers, okStatuses)
-    val raw = res.body?.string().orEmpty()
+    val raw = res.body.string()
     val responseHeaders = res.headers.toMultimap()
     res.close()
     return try {
