@@ -171,14 +171,11 @@ class ControlPlaneClient(
           throw PrismError.Transport("Transport failed: ${e.message}", e)
         }
       if (res.code !in 200..299) {
-        val raw = res.body?.string().orEmpty()
+        val raw = res.body.string()
         res.close()
         throw HttpJson.mapHttpError(res.code, raw)
       }
-      val source = res.body?.byteStream() ?: run {
-        res.close()
-        throw PrismError.Transport("Empty stream body")
-      }
+      val source = res.body.byteStream()
       try {
         val reader = BufferedReader(InputStreamReader(source, StandardCharsets.UTF_8))
         val carry = StringBuilder()
