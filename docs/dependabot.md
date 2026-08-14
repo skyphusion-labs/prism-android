@@ -16,11 +16,11 @@ Root `build.gradle.kts` forces:
 
 | Group / module | Forced version | Why |
 |----------------|----------------|-----|
-| `io.netty:*` | `4.1.136.Final` | HTTP/2, codec, handler CVEs |
-| `org.bouncycastle:*` | `1.84` | GOST CTR + LDAP + bcpkix |
+| `io.netty:*` | `4.2.17.Final` | HTTP/2, codec, handler CVEs |
+| `org.bouncycastle:*` | `1.85` | GOST CTR + LDAP + bcpkix. There is no `1.85.2`. |
 | `org.bitbucket.b_c:jose4j` | `0.9.6` | compressed JWE DoS |
 | `org.jdom:jdom2` | `2.0.6.1` | XXE |
-| `org.apache.commons:commons-lang3` | `3.18.0` | Uncontrolled recursion on long inputs (GHSA-j288-q9x7-2f5v) |
+| `org.apache.commons:commons-lang3` | `3.20.0` | Uncontrolled recursion on long inputs (GHSA-j288-q9x7-2f5v) |
 | `org.apache.commons:commons-compress` | `1.28.0` | Compress CVEs / Dependabot bump |
 
 AGP is also bumped (see root plugins block) so Google's pin moves forward when it can.
@@ -47,4 +47,4 @@ Also forced on the AGP build classpath (tooling only, not app runtime):
 |--------|---------|
 | `com.google.protobuf:protobuf-java` (+ kotlin/util) | `4.35.1` |
 | `org.apache.commons:commons-compress` | `1.28.0` |
-| `org.apache.commons:commons-lang3` | `3.18.0` |
+| `org.apache.commons:commons-lang3` | `3.20.0` |
