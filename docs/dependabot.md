@@ -25,6 +25,17 @@ Root `build.gradle.kts` forces:
 
 AGP is also bumped (see root plugins block) so Google's pin moves forward when it can.
 
+## Ignored majors
+
+`.github/dependabot.yml` ignores majors for:
+
+| Coordinate | Until |
+|---|---|
+| `gradle` (wrapper) | AGP 9. AGP 8.13.2 uses `InternalProblems`, removed in Gradle 9.6. |
+| `com.android.billingclient:billing-ktx` | A dedicated Billing 8/9 migration. 9.x returns `QueryProductDetailsResult` instead of `List<ProductDetails>`. |
+
+okhttp 5 is *not* ignored. It needs compileSdk 36 (same as `activity-compose` 1.13) and is a separate major PR.
+
 ## Residual / cannot fully fix alone
 
 1. **Plugin classpath isolation.** Gradle resolves AGP on a plugin classpath that is not always fully covered by project `buildscript` / `configurations` forces. If Dependabot still reports the same GHSA after merge, the residual is **upstream AGP** (or a Gradle plugin-classpath force that needs a newer Gradle/AGP). Re-check with `./gradlew buildEnvironment | rg netty`.
