@@ -8,7 +8,12 @@ object LegalLinks {
   const val PRIVACY_POLICY = "https://skyphusion.org/privacy.html"
   const val WEBSITE = "https://skyphusion.org"
   const val PLAYGROUND = "https://play.skyphusion.org"
-  const val STATUS = "https://status.skyphusion.org"
+  // No STATUS constant. status.skyphusion.org (Gatus) was removed from the estate
+  // 2026-09-25 and is NXDOMAIN; it shipped pointing at it from 0.8.1 through 1.0.0
+  // (#66 / prism-ios#62). There is no replacement status surface, so the entry is gone
+  // rather than repointed: a link to a page that does not exist yet is a promise, and a
+  // shipped client cannot make one. If a status surface is ever published, add it back
+  // WITH the AboutLink row in SettingsScreen, and mirror it on iOS.
   const val SUPPORT_EMAIL = "mailto:support@skyphusion.org"
 
   /** Complete corresponding source for this AGPL client. */
