@@ -83,5 +83,5 @@ Play Internal: signed AAB via `bundleRelease` + Console upload (`docs/PLAY-INTER
 
 ## Crew + identity
 
-Conrad laptop commits: `Conrad Rockenhaus <conrad@skyphusion.org>`. Crew on dischord: member
-identity via `sudo -u <member>`.
+Conrad laptop commits: `Conrad Rockenhaus <conrad@skyphusion.org>`. Crew: member
+identity via `sudo -n -H -u <member> bash -lc`.
