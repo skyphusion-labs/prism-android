@@ -1,8 +1,8 @@
 plugins {
-  kotlin("jvm") version "2.4.20" apply false
-  kotlin("plugin.serialization") version "2.4.20" apply false
-  kotlin("android") version "2.4.20" apply false
-  kotlin("plugin.compose") version "2.4.20" apply false
+  kotlin("jvm") version "2.4.21" apply false
+  kotlin("plugin.serialization") version "2.4.21" apply false
+  kotlin("android") version "2.4.21" apply false
+  kotlin("plugin.compose") version "2.4.21" apply false
   id("com.android.application") version "8.13.2" apply false
 }
 
@@ -23,27 +23,27 @@ buildscript {
   configurations.configureEach {
     resolutionStrategy {
       force(
-        "io.netty:netty-buffer:4.2.18.Final",
-        "io.netty:netty-codec:4.2.18.Final",
-        "io.netty:netty-codec-http:4.2.18.Final",
-        "io.netty:netty-codec-http2:4.2.18.Final",
-        "io.netty:netty-codec-socks:4.2.18.Final",
-        "io.netty:netty-common:4.2.18.Final",
-        "io.netty:netty-handler:4.2.18.Final",
-        "io.netty:netty-handler-proxy:4.2.18.Final",
-        "io.netty:netty-resolver:4.2.18.Final",
-        "io.netty:netty-transport:4.2.18.Final",
-        "io.netty:netty-transport-native-unix-common:4.2.18.Final",
+        "io.netty:netty-buffer:4.2.19.Final",
+        "io.netty:netty-codec:4.2.19.Final",
+        "io.netty:netty-codec-http:4.2.19.Final",
+        "io.netty:netty-codec-http2:4.2.19.Final",
+        "io.netty:netty-codec-socks:4.2.19.Final",
+        "io.netty:netty-common:4.2.19.Final",
+        "io.netty:netty-handler:4.2.19.Final",
+        "io.netty:netty-handler-proxy:4.2.19.Final",
+        "io.netty:netty-resolver:4.2.19.Final",
+        "io.netty:netty-transport:4.2.19.Final",
+        "io.netty:netty-transport-native-unix-common:4.2.19.Final",
         "org.bouncycastle:bcprov-jdk18on:1.86",
         "org.bouncycastle:bcpkix-jdk18on:1.86",
         "org.bouncycastle:bcutil-jdk18on:1.86",
         "org.bitbucket.b_c:jose4j:0.9.7",
         "org.jdom:jdom2:2.0.6.1",
-        "com.google.protobuf:protobuf-java:4.36.1",
-        "com.google.protobuf:protobuf-kotlin:4.36.1",
-        "com.google.protobuf:protobuf-java-util:4.36.1",
+        "com.google.protobuf:protobuf-java:4.36.2",
+        "com.google.protobuf:protobuf-kotlin:4.36.2",
+        "com.google.protobuf:protobuf-java-util:4.36.2",
         "org.apache.commons:commons-compress:1.28.0",
-        "org.apache.commons:commons-lang3:3.20.0",
+        "org.apache.commons:commons-lang3:3.21.0",
 
       )
     }
@@ -59,27 +59,27 @@ allprojects {
     configurations.configureEach {
       resolutionStrategy {
         force(
-          "io.netty:netty-buffer:4.2.18.Final",
-          "io.netty:netty-codec:4.2.18.Final",
-          "io.netty:netty-codec-http:4.2.18.Final",
-          "io.netty:netty-codec-http2:4.2.18.Final",
-          "io.netty:netty-codec-socks:4.2.18.Final",
-          "io.netty:netty-common:4.2.18.Final",
-          "io.netty:netty-handler:4.2.18.Final",
-          "io.netty:netty-handler-proxy:4.2.18.Final",
-          "io.netty:netty-resolver:4.2.18.Final",
-          "io.netty:netty-transport:4.2.18.Final",
-          "io.netty:netty-transport-native-unix-common:4.2.18.Final",
+          "io.netty:netty-buffer:4.2.19.Final",
+          "io.netty:netty-codec:4.2.19.Final",
+          "io.netty:netty-codec-http:4.2.19.Final",
+          "io.netty:netty-codec-http2:4.2.19.Final",
+          "io.netty:netty-codec-socks:4.2.19.Final",
+          "io.netty:netty-common:4.2.19.Final",
+          "io.netty:netty-handler:4.2.19.Final",
+          "io.netty:netty-handler-proxy:4.2.19.Final",
+          "io.netty:netty-resolver:4.2.19.Final",
+          "io.netty:netty-transport:4.2.19.Final",
+          "io.netty:netty-transport-native-unix-common:4.2.19.Final",
           "org.bouncycastle:bcprov-jdk18on:1.86",
           "org.bouncycastle:bcpkix-jdk18on:1.86",
           "org.bouncycastle:bcutil-jdk18on:1.86",
           "org.bitbucket.b_c:jose4j:0.9.7",
           "org.jdom:jdom2:2.0.6.1",
-        "com.google.protobuf:protobuf-java:4.36.1",
-        "com.google.protobuf:protobuf-kotlin:4.36.1",
-        "com.google.protobuf:protobuf-java-util:4.36.1",
+        "com.google.protobuf:protobuf-java:4.36.2",
+        "com.google.protobuf:protobuf-kotlin:4.36.2",
+        "com.google.protobuf:protobuf-java-util:4.36.2",
         "org.apache.commons:commons-compress:1.28.0",
-        "org.apache.commons:commons-lang3:3.20.0",
+        "org.apache.commons:commons-lang3:3.21.0",
 
         )
       }
@@ -88,27 +88,27 @@ allprojects {
   configurations.configureEach {
     resolutionStrategy {
       force(
-        "io.netty:netty-buffer:4.2.18.Final",
-        "io.netty:netty-codec:4.2.18.Final",
-        "io.netty:netty-codec-http:4.2.18.Final",
-        "io.netty:netty-codec-http2:4.2.18.Final",
-        "io.netty:netty-codec-socks:4.2.18.Final",
-        "io.netty:netty-common:4.2.18.Final",
-        "io.netty:netty-handler:4.2.18.Final",
-        "io.netty:netty-handler-proxy:4.2.18.Final",
-        "io.netty:netty-resolver:4.2.18.Final",
-        "io.netty:netty-transport:4.2.18.Final",
-        "io.netty:netty-transport-native-unix-common:4.2.18.Final",
+        "io.netty:netty-buffer:4.2.19.Final",
+        "io.netty:netty-codec:4.2.19.Final",
+        "io.netty:netty-codec-http:4.2.19.Final",
+        "io.netty:netty-codec-http2:4.2.19.Final",
+        "io.netty:netty-codec-socks:4.2.19.Final",
+        "io.netty:netty-common:4.2.19.Final",
+        "io.netty:netty-handler:4.2.19.Final",
+        "io.netty:netty-handler-proxy:4.2.19.Final",
+        "io.netty:netty-resolver:4.2.19.Final",
+        "io.netty:netty-transport:4.2.19.Final",
+        "io.netty:netty-transport-native-unix-common:4.2.19.Final",
         "org.bouncycastle:bcprov-jdk18on:1.86",
         "org.bouncycastle:bcpkix-jdk18on:1.86",
         "org.bouncycastle:bcutil-jdk18on:1.86",
         "org.bitbucket.b_c:jose4j:0.9.7",
         "org.jdom:jdom2:2.0.6.1",
-        "com.google.protobuf:protobuf-java:4.36.1",
-        "com.google.protobuf:protobuf-kotlin:4.36.1",
-        "com.google.protobuf:protobuf-java-util:4.36.1",
+        "com.google.protobuf:protobuf-java:4.36.2",
+        "com.google.protobuf:protobuf-kotlin:4.36.2",
+        "com.google.protobuf:protobuf-java-util:4.36.2",
         "org.apache.commons:commons-compress:1.28.0",
-        "org.apache.commons:commons-lang3:3.20.0",
+        "org.apache.commons:commons-lang3:3.21.0",
 
       )
     }
