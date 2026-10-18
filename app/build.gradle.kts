@@ -16,7 +16,7 @@ if (keystorePropertiesFile.exists()) {
 
 android {
   namespace = "org.skyphusion.prism.app"
-  compileSdk = 36
+  compileSdk = 37
 
   defaultConfig {
     applicationId = "org.skyphusion.prism"
