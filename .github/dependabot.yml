@@ -21,10 +21,12 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: deps
-    # Closed red majors 2026-08-14:
-    # - gradle 9.7 needs AGP 9 (8.13.2 uses InternalProblems, removed in 9.6)
+    # Majors that stay ignored:
+    # - gradle 10. The wrapper is 9.8.0, paired with AGP 9.4.1. AGP 8.x uses
+    #   InternalProblems, which Gradle 9.6 removed, so the wrapper cannot move alone.
     # - billing-ktx 9 changes queryProductDetailsAsync to QueryProductDetailsResult
-    # - AGP 9.3.1 (#53) is the dedicated AGP 9 migration, not a weekly bump
+    # - AGP 10. 9.4.1 is the compileSdk 37 line (API 37 needs AGP >= 9.1.1, and
+    #   9.4.1 is the current stable whose minimum Gradle is 9.6).
     # - bouncycastle 1.85.2 is not published (latest jdk18on is 1.85); #50 then #52
     ignore:
       - dependency-name: "gradle"

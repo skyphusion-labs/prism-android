@@ -479,7 +479,6 @@ fun SettingsScreen(
       Spacer(Modifier.height(8.dp))
       AboutLink("skyphusion.org", LegalLinks.WEBSITE)
       AboutLink("Prism playground (web)", LegalLinks.PLAYGROUND)
-      AboutLink("Status", LegalLinks.STATUS)
       TextButton(
         onClick = {
           context.startActivity(
