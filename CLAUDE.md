@@ -10,7 +10,7 @@ RAG / artifacts remain on [prism](https://github.com/skyphusion-labs/prism) (dev
 only in the app).
 
 **Status: v1.0.0** (tag `v1.0.0` on `main`; `versionName` 1.0.0 / `versionCode` 19;
-`applicationId` **`org.skyphusion.prism`**). iOS 1.0.0 product parity. Plane **1.0.0**. GitHub Release
+`applicationId` **`org.skyphusion.prism`**). iOS 1.0.0 product parity. Plane **1.1.1**. GitHub Release
 ships signed `app-release.aab`. Play Internal: `docs/PLAY-INTERNAL.md`. README mirrors prism-ios
 (Mermaid + full catalog). Aviation-grade `main`.
 
@@ -18,10 +18,10 @@ ships signed `app-release.aab`. Play Internal: `docs/PLAY-INTERNAL.md`. README m
 
 | Repo | Role |
 | --- | --- |
-| [prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane) | Metered inference -- primary target **1.0.0** |
-| [prism](https://github.com/skyphusion-labs/prism) | Playground Worker **1.0.0** |
+| [prism-control-plane](https://github.com/skyphusion-labs/prism-control-plane) | Metered inference -- primary target **1.1.1** |
+| [prism](https://github.com/skyphusion-labs/prism) | Playground Worker **1.1.1** |
 | [prism-ios](https://github.com/skyphusion-labs/prism-ios) | Sibling Swift kit + shell **1.0.0** |
-| [prism-mcp](https://github.com/skyphusion-labs/prism-mcp) | Agent MCP door **1.0.0** |
+| [prism-mcp](https://github.com/skyphusion-labs/prism-mcp) | Agent MCP door **1.1.0** |
 
 ## Layout
 
