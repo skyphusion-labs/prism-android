@@ -3,7 +3,7 @@ plugins {
   kotlin("plugin.serialization") version "2.4.21" apply false
   kotlin("android") version "2.4.21" apply false
   kotlin("plugin.compose") version "2.4.21" apply false
-  id("com.android.application") version "9.5.0" apply false
+  id("com.android.application") version "9.5.1" apply false
 }
 
 // Dependabot: Netty / BouncyCastle / jose4j / jdom2 arrive only on the
@@ -23,17 +23,17 @@ buildscript {
   configurations.configureEach {
     resolutionStrategy {
       force(
-        "io.netty:netty-buffer:4.2.19.Final",
-        "io.netty:netty-codec:4.2.19.Final",
-        "io.netty:netty-codec-http:4.2.19.Final",
-        "io.netty:netty-codec-http2:4.2.19.Final",
-        "io.netty:netty-codec-socks:4.2.19.Final",
-        "io.netty:netty-common:4.2.19.Final",
-        "io.netty:netty-handler:4.2.19.Final",
-        "io.netty:netty-handler-proxy:4.2.19.Final",
-        "io.netty:netty-resolver:4.2.19.Final",
-        "io.netty:netty-transport:4.2.19.Final",
-        "io.netty:netty-transport-native-unix-common:4.2.19.Final",
+        "io.netty:netty-buffer:4.2.20.Final",
+        "io.netty:netty-codec:4.2.20.Final",
+        "io.netty:netty-codec-http:4.2.20.Final",
+        "io.netty:netty-codec-http2:4.2.20.Final",
+        "io.netty:netty-codec-socks:4.2.20.Final",
+        "io.netty:netty-common:4.2.20.Final",
+        "io.netty:netty-handler:4.2.20.Final",
+        "io.netty:netty-handler-proxy:4.2.20.Final",
+        "io.netty:netty-resolver:4.2.20.Final",
+        "io.netty:netty-transport:4.2.20.Final",
+        "io.netty:netty-transport-native-unix-common:4.2.20.Final",
         "org.bouncycastle:bcprov-jdk18on:1.86",
         "org.bouncycastle:bcpkix-jdk18on:1.86",
         "org.bouncycastle:bcutil-jdk18on:1.86",
@@ -59,17 +59,17 @@ allprojects {
     configurations.configureEach {
       resolutionStrategy {
         force(
-          "io.netty:netty-buffer:4.2.19.Final",
-          "io.netty:netty-codec:4.2.19.Final",
-          "io.netty:netty-codec-http:4.2.19.Final",
-          "io.netty:netty-codec-http2:4.2.19.Final",
-          "io.netty:netty-codec-socks:4.2.19.Final",
-          "io.netty:netty-common:4.2.19.Final",
-          "io.netty:netty-handler:4.2.19.Final",
-          "io.netty:netty-handler-proxy:4.2.19.Final",
-          "io.netty:netty-resolver:4.2.19.Final",
-          "io.netty:netty-transport:4.2.19.Final",
-          "io.netty:netty-transport-native-unix-common:4.2.19.Final",
+          "io.netty:netty-buffer:4.2.20.Final",
+          "io.netty:netty-codec:4.2.20.Final",
+          "io.netty:netty-codec-http:4.2.20.Final",
+          "io.netty:netty-codec-http2:4.2.20.Final",
+          "io.netty:netty-codec-socks:4.2.20.Final",
+          "io.netty:netty-common:4.2.20.Final",
+          "io.netty:netty-handler:4.2.20.Final",
+          "io.netty:netty-handler-proxy:4.2.20.Final",
+          "io.netty:netty-resolver:4.2.20.Final",
+          "io.netty:netty-transport:4.2.20.Final",
+          "io.netty:netty-transport-native-unix-common:4.2.20.Final",
           "org.bouncycastle:bcprov-jdk18on:1.86",
           "org.bouncycastle:bcpkix-jdk18on:1.86",
           "org.bouncycastle:bcutil-jdk18on:1.86",
@@ -88,17 +88,17 @@ allprojects {
   configurations.configureEach {
     resolutionStrategy {
       force(
-        "io.netty:netty-buffer:4.2.19.Final",
-        "io.netty:netty-codec:4.2.19.Final",
-        "io.netty:netty-codec-http:4.2.19.Final",
-        "io.netty:netty-codec-http2:4.2.19.Final",
-        "io.netty:netty-codec-socks:4.2.19.Final",
-        "io.netty:netty-common:4.2.19.Final",
-        "io.netty:netty-handler:4.2.19.Final",
-        "io.netty:netty-handler-proxy:4.2.19.Final",
-        "io.netty:netty-resolver:4.2.19.Final",
-        "io.netty:netty-transport:4.2.19.Final",
-        "io.netty:netty-transport-native-unix-common:4.2.19.Final",
+        "io.netty:netty-buffer:4.2.20.Final",
+        "io.netty:netty-codec:4.2.20.Final",
+        "io.netty:netty-codec-http:4.2.20.Final",
+        "io.netty:netty-codec-http2:4.2.20.Final",
+        "io.netty:netty-codec-socks:4.2.20.Final",
+        "io.netty:netty-common:4.2.20.Final",
+        "io.netty:netty-handler:4.2.20.Final",
+        "io.netty:netty-handler-proxy:4.2.20.Final",
+        "io.netty:netty-resolver:4.2.20.Final",
+        "io.netty:netty-transport:4.2.20.Final",
+        "io.netty:netty-transport-native-unix-common:4.2.20.Final",
         "org.bouncycastle:bcprov-jdk18on:1.86",
         "org.bouncycastle:bcpkix-jdk18on:1.86",
         "org.bouncycastle:bcutil-jdk18on:1.86",
