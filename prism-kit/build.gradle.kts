@@ -7,7 +7,7 @@ group = "org.skyphusion.prism"
 version = "1.0.0"
 
 dependencies {
-  implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.12.0")
+  implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.13.0")
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
   implementation("com.squareup.okhttp3:okhttp:5.5.1")
 

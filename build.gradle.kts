@@ -34,16 +34,16 @@ buildscript {
         "io.netty:netty-resolver:4.2.20.Final",
         "io.netty:netty-transport:4.2.20.Final",
         "io.netty:netty-transport-native-unix-common:4.2.20.Final",
-        "org.bouncycastle:bcprov-jdk18on:1.86",
-        "org.bouncycastle:bcpkix-jdk18on:1.86",
-        "org.bouncycastle:bcutil-jdk18on:1.86",
+        "org.bouncycastle:bcprov-jdk18on:1.87",
+        "org.bouncycastle:bcpkix-jdk18on:1.87",
+        "org.bouncycastle:bcutil-jdk18on:1.87",
         "org.bitbucket.b_c:jose4j:0.9.7",
         "org.jdom:jdom2:2.0.6.1",
         "com.google.protobuf:protobuf-java:4.36.2",
         "com.google.protobuf:protobuf-kotlin:4.36.2",
         "com.google.protobuf:protobuf-java-util:4.36.2",
         "org.apache.commons:commons-compress:1.28.0",
-        "org.apache.commons:commons-lang3:3.21.0",
+        "org.apache.commons:commons-lang3:3.22.0",
 
       )
     }
@@ -70,16 +70,16 @@ allprojects {
           "io.netty:netty-resolver:4.2.20.Final",
           "io.netty:netty-transport:4.2.20.Final",
           "io.netty:netty-transport-native-unix-common:4.2.20.Final",
-          "org.bouncycastle:bcprov-jdk18on:1.86",
-          "org.bouncycastle:bcpkix-jdk18on:1.86",
-          "org.bouncycastle:bcutil-jdk18on:1.86",
+          "org.bouncycastle:bcprov-jdk18on:1.87",
+          "org.bouncycastle:bcpkix-jdk18on:1.87",
+          "org.bouncycastle:bcutil-jdk18on:1.87",
           "org.bitbucket.b_c:jose4j:0.9.7",
           "org.jdom:jdom2:2.0.6.1",
         "com.google.protobuf:protobuf-java:4.36.2",
         "com.google.protobuf:protobuf-kotlin:4.36.2",
         "com.google.protobuf:protobuf-java-util:4.36.2",
         "org.apache.commons:commons-compress:1.28.0",
-        "org.apache.commons:commons-lang3:3.21.0",
+        "org.apache.commons:commons-lang3:3.22.0",
 
         )
       }
@@ -99,16 +99,16 @@ allprojects {
         "io.netty:netty-resolver:4.2.20.Final",
         "io.netty:netty-transport:4.2.20.Final",
         "io.netty:netty-transport-native-unix-common:4.2.20.Final",
-        "org.bouncycastle:bcprov-jdk18on:1.86",
-        "org.bouncycastle:bcpkix-jdk18on:1.86",
-        "org.bouncycastle:bcutil-jdk18on:1.86",
+        "org.bouncycastle:bcprov-jdk18on:1.87",
+        "org.bouncycastle:bcpkix-jdk18on:1.87",
+        "org.bouncycastle:bcutil-jdk18on:1.87",
         "org.bitbucket.b_c:jose4j:0.9.7",
         "org.jdom:jdom2:2.0.6.1",
         "com.google.protobuf:protobuf-java:4.36.2",
         "com.google.protobuf:protobuf-kotlin:4.36.2",
         "com.google.protobuf:protobuf-java-util:4.36.2",
         "org.apache.commons:commons-compress:1.28.0",
-        "org.apache.commons:commons-lang3:3.21.0",
+        "org.apache.commons:commons-lang3:3.22.0",
 
       )
     }
